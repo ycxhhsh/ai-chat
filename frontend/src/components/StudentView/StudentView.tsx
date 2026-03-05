@@ -44,12 +44,12 @@ export const StudentView: React.FC = () => {
     const sessionId = currentGroupId || user?.user_id || null;
     const { send } = useWebSocket(sessionId);
 
-    // 定期轮询支架状态（30s），确保教师端开闭同步到学生端
+    // 定期轮询支架状态（15s），确保教师端开闭同步到学生端
     useEffect(() => {
         fetchScaffolds().catch(() => { });
         const timer = setInterval(() => {
             fetchScaffolds().catch(() => { });
-        }, 30_000);
+        }, 15_000);
         return () => clearInterval(timer);
     }, [fetchScaffolds]);
 
