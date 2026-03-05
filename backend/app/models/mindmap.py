@@ -19,6 +19,9 @@ class MindMap(Base):
     session_id: Mapped[str] = mapped_column(
         String, index=True, nullable=False
     )
+    map_key: Mapped[str] = mapped_column(
+        String, index=True, nullable=False, default=""
+    )
     # [{id, label, x, y, type, ...}]
     nodes: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
     # [{id, source, target, label, ...}]

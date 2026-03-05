@@ -352,6 +352,7 @@ interface MindMapFlowProps {
     onEditSync: (operation: string, payload: Record<string, unknown>) => void;
     onSend: (event: string, data: Record<string, unknown>) => void;
     onAskSuggestion?: (question: string) => void;
+    mapKey?: string;
 }
 
 function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: MindMapFlowProps) {

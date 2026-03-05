@@ -82,6 +82,13 @@ export const api = {
         },
     },
 
+    mindmaps: {
+        get: async (mapKey: string) => {
+            const res = await http.get(`/mindmaps/${mapKey}`);
+            return res.data;
+        },
+    },
+
     assignments: {
         submit: async (content: string, fileUrl?: string) => {
             const res = await http.post('/assignments', { content, file_url: fileUrl || null });

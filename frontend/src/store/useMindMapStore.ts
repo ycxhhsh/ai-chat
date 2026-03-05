@@ -2,6 +2,7 @@
  * 思维导图 Store — 适配 React Flow + AI 草稿浮层（铁律 2）。
  */
 import { create } from 'zustand';
+import { api } from '../api';
 import {
     type Node,
     type Edge,
@@ -81,6 +82,7 @@ interface MindMapState {
     edges: FlowEdge[];
     isGenerating: boolean;
     currentMapId: string | null;
+    currentMapKey: string | null;
     version: number;
 
     /** AI 草稿（铁律 2：用户确认前不合入 Yjs） */
@@ -117,6 +119,9 @@ interface MindMapState {
     /* 导出 & 上下文 */
     exportAsMarkdown: () => string;
     serializeAsContext: () => string;
+
+    /* 分区加载 */
+    loadMindMap: (mapKey: string) => Promise<void>;
 }
 
 export const useMindMapStore = create<MindMapState>()((set, get) => ({
@@ -124,6 +129,7 @@ export const useMindMapStore = create<MindMapState>()((set, get) => ({
     edges: [],
     isGenerating: false,
     currentMapId: null,
+    currentMapKey: null,
     version: 0,
     draftNodes: [],
     draftEdges: [],
@@ -241,6 +247,7 @@ export const useMindMapStore = create<MindMapState>()((set, get) => ({
             nodes: [],
             edges: [],
             currentMapId: null,
+            currentMapKey: null,
             version: 0,
             draftNodes: [],
             draftEdges: [],
@@ -248,6 +255,37 @@ export const useMindMapStore = create<MindMapState>()((set, get) => ({
             draftRawEdges: [],
             hasDraft: false,
         }),
+
+    loadMindMap: async (mapKey: string) => {
+        const current = get().currentMapKey;
+        if (current === mapKey) return;
+        // 清空当前图
+        set({
+            nodes: [],
+            edges: [],
+            currentMapId: null,
+            currentMapKey: mapKey,
+            version: 0,
+            draftNodes: [],
+            draftEdges: [],
+            draftRawNodes: [],
+            draftRawEdges: [],
+            hasDraft: false,
+        });
+        try {
+            const data = await api.mindmaps.get(mapKey);
+            if (data && data.nodes && data.nodes.length > 0 && get().currentMapKey === mapKey) {
+                set({
+                    nodes: data.nodes.map(toFlowNode),
+                    edges: data.edges.map(toFlowEdge),
+                    currentMapId: data.id || null,
+                    version: data.version || 0,
+                });
+            }
+        } catch (e) {
+            console.error('Load mindmap failed:', e);
+        }
+    },
 
     /** 导出 Markdown 大纲 */
     exportAsMarkdown: () => {

@@ -7,6 +7,7 @@ import { useGroupStore } from '../../store/useGroupStore';
 import { useChatStore } from '../../store/useChatStore';
 import { useScaffoldStore } from '../../store/useScaffoldStore';
 import { useAiConversationStore } from '../../store/useAiConversationStore';
+import { useMindMapStore } from '../../store/useMindMapStore';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { api } from '../../api';
 import { Sidebar } from './Sidebar';
@@ -39,10 +40,18 @@ export const StudentView: React.FC = () => {
         currentConversationId,
         createConversation,
     } = useAiConversationStore();
+    const { loadMindMap } = useMindMapStore();
 
     // 使用小组 ID 或用户 ID 作为 WS session
     const sessionId = currentGroupId || user?.user_id || null;
     const { send } = useWebSocket(sessionId);
+
+    // 计算思维导图分区键
+    const mapKey = activeChannel === 'group' && currentGroupId
+        ? `group:${currentGroupId}`
+        : activeChannel === 'ai' && currentConversationId
+            ? `conv:${currentConversationId}`
+            : null;
 
     // 定期轮询支架状态（15s），确保教师端开闭同步到学生端
     useEffect(() => {
@@ -69,6 +78,13 @@ export const StudentView: React.FC = () => {
         })();
         return () => { cancelled = true; };
     }, [currentConversationId, activeChannel, setAiMessages]);
+
+    // 切换频道/对话时加载对应思维导图
+    useEffect(() => {
+        if (mapKey) {
+            loadMindMap(mapKey);
+        }
+    }, [mapKey, loadMindMap]);
 
     // 发送消息
     const handleSend = useCallback(
@@ -146,15 +162,15 @@ export const StudentView: React.FC = () => {
 
     // 生成思维导图
     const handleGenerateMindMap = useCallback(() => {
-        send('MINDMAP_GENERATE', {});
-    }, [send]);
+        send('MINDMAP_GENERATE', { map_key: mapKey || '' });
+    }, [send, mapKey]);
 
     // 思维导图编辑同步
     const handleMindMapEditSync = useCallback(
         (operation: string, payload: Record<string, unknown>) => {
-            send('MINDMAP_EDIT', { operation, payload });
+            send('MINDMAP_EDIT', { operation, payload, map_key: mapKey || '' });
         },
-        [send]
+        [send, mapKey]
     );
 
     // 当前频道的消息
@@ -220,6 +236,7 @@ export const StudentView: React.FC = () => {
                                 onGenerate={handleGenerateMindMap}
                                 onEditSync={handleMindMapEditSync}
                                 onSend={send}
+                                mapKey={mapKey || undefined}
                                 onAskSuggestion={(question) => {
                                     setInputMessage(question.replace(/？$/, '') + ' — 请帮我详细探讨这个方向');
                                     setActiveChannel('ai');

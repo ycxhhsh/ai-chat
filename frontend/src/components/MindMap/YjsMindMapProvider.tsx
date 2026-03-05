@@ -4,19 +4,22 @@
  * 将 Yjs CRDT 文档绑定到 React Flow 的 nodes/edges，
  * 通过 y-websocket 连接后端 /yjs/{room_name} 端点实现实时协作。
  *
+ * 使用 y-indexeddb 在断网期间暂存编辑，上线后自动同步。
+ *
  * 使用方式：
- *   <YjsMindMapProvider sessionId={sessionId}>
+ *   <YjsMindMapProvider mapKey={mapKey}>
  *     <MindMapCanvas />
  *   </YjsMindMapProvider>
  */
 import { useEffect, useRef, useCallback } from 'react';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
+import { IndexeddbPersistence } from 'y-indexeddb';
 import { useMindMapStore } from '../../store/useMindMapStore';
 import type { MindMapNodeData } from '../../types';
 
 interface YjsMindMapProviderProps {
-    sessionId: string;
+    mapKey: string;
     children: React.ReactNode;
 }
 
@@ -27,23 +30,32 @@ function getYjsUrl(): string {
     return `${protocol}//${host}`;
 }
 
-export function YjsMindMapProvider({ sessionId, children }: YjsMindMapProviderProps) {
+export function YjsMindMapProvider({ mapKey, children }: YjsMindMapProviderProps) {
     const docRef = useRef<Y.Doc | null>(null);
     const providerRef = useRef<WebsocketProvider | null>(null);
+    const idbRef = useRef<IndexeddbPersistence | null>(null);
     const { nodes, edges, setMindMapData } = useMindMapStore();
 
     // 初始化 Yjs 文档和 WebSocket 连接
     useEffect(() => {
         const doc = new Y.Doc();
-        const roomName = `mindmap:${sessionId}`;
+        const roomName = `mindmap:${mapKey}`;
         const wsUrl = getYjsUrl();
 
+        // WebSocket 协作
         const provider = new WebsocketProvider(wsUrl, roomName, doc, {
             connect: true,
         });
 
+        // IndexedDB 离线持久化
+        const idbPersistence = new IndexeddbPersistence(roomName, doc);
+        idbPersistence.on('synced', () => {
+            console.log(`[Yjs] IndexedDB synced for ${roomName}`);
+        });
+
         docRef.current = doc;
         providerRef.current = provider;
+        idbRef.current = idbPersistence;
 
         // 获取共享类型
         const yNodes = doc.getMap<Y.Map<unknown>>('nodes');
@@ -77,8 +89,8 @@ export function YjsMindMapProvider({ sessionId, children }: YjsMindMapProviderPr
             });
 
             setMindMapData({
-                id: sessionId,
-                session_id: sessionId,
+                id: mapKey,
+                session_id: mapKey,
                 nodes: flowNodes.map(n => ({
                     id: n.id,
                     label: n.data.label,
@@ -110,11 +122,13 @@ export function YjsMindMapProvider({ sessionId, children }: YjsMindMapProviderPr
             yNodes.unobserveDeep(syncToStore);
             yEdges.unobserveDeep(syncToStore);
             provider.disconnect();
+            idbPersistence.destroy();
             doc.destroy();
             docRef.current = null;
             providerRef.current = null;
+            idbRef.current = null;
         };
-    }, [sessionId, setMindMapData]);
+    }, [mapKey, setMindMapData]);
 
     // 将本地 React Flow 变更写回 Yjs 文档
     const pushNodesToYjs = useCallback(() => {

@@ -39,8 +39,10 @@ async def handle_mindmap_generate(
         {"is_generating": True, "triggered_by": user_info["user_id"]},
     )
 
+    map_key = data.get("map_key") or f"session:{session_id}"
+
     asyncio.create_task(
-        _generate_mindmap(session_id, user_info, manager)
+        _generate_mindmap(session_id, user_info, manager, map_key=map_key)
     )
 
 
@@ -50,6 +52,7 @@ async def _generate_mindmap(
     manager: ConnectionManager,
     *,
     auto_trigger: bool = False,
+    map_key: str = "",
 ) -> None:
     """从对话中提取思维导图。
 
@@ -101,11 +104,12 @@ async def _generate_mindmap(
             return
 
         # 查找已有思维导图（用于增量更新）
+        effective_key = map_key or f"session:{session_id}"
         existing_context = ""
         async with AsyncSessionLocal() as db:
             result = await db.execute(
                 select(MindMap)
-                .where(MindMap.session_id == session_id)
+                .where(MindMap.map_key == effective_key)
                 .order_by(MindMap.updated_at.desc())
                 .limit(1)
             )
@@ -176,6 +180,7 @@ async def _generate_mindmap(
             {
                 "draft_id": draft_id,
                 "session_id": session_id,
+                "map_key": effective_key,
                 "nodes": nodes,
                 "edges": edges,
                 "generated_by": user_info["user_id"],
@@ -216,6 +221,7 @@ async def handle_mindmap_edit(
     # 编辑操作类型：add_node, remove_node, update_node, add_edge, remove_edge
     operation = data.get("operation")
     payload = data.get("payload", {})
+    map_key = data.get("map_key") or f"session:{session_id}"
 
     if not operation:
         await manager.send_error(websocket, "Missing operation type")
@@ -228,6 +234,7 @@ async def handle_mindmap_edit(
         {
             "operation": operation,
             "payload": payload,
+            "map_key": map_key,
             "user_id": user_info["user_id"],
             "user_name": user_info["user_name"],
         },
@@ -236,12 +243,12 @@ async def handle_mindmap_edit(
 
     # 异步更新数据库
     asyncio.create_task(
-        _update_mindmap_db(session_id, operation, payload)
+        _update_mindmap_db(map_key, operation, payload)
     )
 
 
 async def _update_mindmap_db(
-    session_id: str, operation: str, payload: dict
+    map_key: str, operation: str, payload: dict
 ) -> None:
     """异步更新数据库中的思维导图数据。"""
     try:
@@ -252,7 +259,7 @@ async def _update_mindmap_db(
         async with AsyncSessionLocal() as db:
             result = await db.execute(
                 select(MindMap)
-                .where(MindMap.session_id == session_id)
+                .where(MindMap.map_key == map_key)
                 .order_by(MindMap.updated_at.desc())
                 .limit(1)
             )
@@ -306,6 +313,7 @@ async def handle_mindmap_accept_draft(
 
     nodes = data.get("nodes", [])
     edges = data.get("edges", [])
+    map_key = data.get("map_key") or f"session:{session_id}"
 
     if not nodes:
         await manager.send_error(websocket, "Empty draft")
@@ -320,6 +328,7 @@ async def handle_mindmap_accept_draft(
             mindmap = MindMap(
                 id=map_id,
                 session_id=session_id,
+                map_key=map_key,
                 nodes=nodes,
                 edges=edges,
                 created_by=user_info["user_id"],
@@ -334,6 +343,7 @@ async def handle_mindmap_accept_draft(
             {
                 "id": map_id,
                 "session_id": session_id,
+                "map_key": map_key,
                 "nodes": nodes,
                 "edges": edges,
                 "version": 1,
