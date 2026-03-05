@@ -17,7 +17,6 @@ import { useMindMapStore } from '../store/useMindMapStore';
 import type { ChatMessage } from '../types';
 
 // 心跳配置
-const HEARTBEAT_INTERVAL = 25_000; // 25 秒发一次 PONG
 const HEARTBEAT_TIMEOUT = 60_000;  // 60 秒内没收到 PING 视为断连（宽松值，避免 LLM 繁忙时误断）
 
 // 重连配置
