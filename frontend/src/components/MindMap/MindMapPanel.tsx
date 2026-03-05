@@ -32,7 +32,7 @@ import '@xyflow/react/dist/style.css';  // @ts-ignore css import
 import dagre from '@dagrejs/dagre';
 import { useMindMapStore, type FlowNode, type FlowEdge } from '../../store/useMindMapStore';
 import type { MindMapNodeData, MindMapNodeType } from '../../types';
-import { Loader2, Sparkles, Plus } from 'lucide-react';
+import { Loader2, Sparkles, Plus, Download, MessageCircle, ChevronDown } from 'lucide-react';
 import { DraftOverlay } from './DraftOverlay';
 
 // ── 颜色映射 ──
@@ -42,6 +42,7 @@ const NODE_COLORS: Record<MindMapNodeType, { bg: string; border: string; text: s
     argument: { bg: '#fffbeb', border: '#f59e0b', text: '#b45309' },
     evidence: { bg: '#ecfdf5', border: '#10b981', text: '#047857' },
     question: { bg: '#fef2f2', border: '#ef4444', text: '#b91c1c' },
+    suggestion: { bg: '#faf5ff', border: '#a78bfa', text: '#7c3aed' },
 };
 
 const NODE_TYPE_LABELS: Record<MindMapNodeType, string> = {
@@ -49,6 +50,7 @@ const NODE_TYPE_LABELS: Record<MindMapNodeType, string> = {
     argument: '论点',
     evidence: '证据',
     question: '问题',
+    suggestion: '💡 探索',
 };
 
 // ── ErrorBoundary ──
@@ -156,10 +158,17 @@ function MindMapCustomNode({ data, id }: NodeProps<Node<MindMapNodeData>>) {
     return (
         <div
             onDoubleClick={handleDoubleClick}
+            onClick={() => {
+                // 点击 suggestion 节点触发发问
+                if (data.nodeType === 'suggestion') {
+                    window.dispatchEvent(new CustomEvent('mindmap-ask-suggestion', { detail: data.label }));
+                }
+            }}
             className="group relative"
             style={{
                 minWidth: 100,
                 maxWidth: 200,
+                cursor: data.nodeType === 'suggestion' ? 'pointer' : undefined,
             }}
         >
             <Handle type="target" position={Position.Top} className="!w-2 !h-2 !bg-gray-300" />
@@ -239,7 +248,7 @@ function MindMapCustomEdge({
         targetPosition,
     });
 
-    const isDraft = id.startsWith('draft_');
+    const isDraft = id?.startsWith('draft_') ?? false;
 
     useEffect(() => {
         if (isEditing && inputRef.current) {
@@ -342,9 +351,10 @@ interface MindMapFlowProps {
     onGenerate: () => void;
     onEditSync: (operation: string, payload: Record<string, unknown>) => void;
     onSend: (event: string, data: Record<string, unknown>) => void;
+    onAskSuggestion?: (question: string) => void;
 }
 
-function MindMapFlowInner({ onGenerate, onEditSync, onSend }: MindMapFlowProps) {
+function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: MindMapFlowProps) {
     const {
         nodes,
         edges,
@@ -356,7 +366,11 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend }: MindMapFlowProps) 
         draftNodes,
         draftEdges,
         hasDraft,
+        exportAsMarkdown,
+        serializeAsContext,
     } = useMindMapStore();
+
+    const [showExportMenu, setShowExportMenu] = useState(false);
 
     // 合并正式节点和草稿节点
     const mergedNodes = useMemo(() => [...nodes, ...draftNodes], [nodes, draftNodes]);
@@ -414,6 +428,93 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend }: MindMapFlowProps) 
         onEditSync('add_node', newNode);
     }, [addNode, onEditSync]);
 
+    // 导出 Markdown
+    const handleExportMd = useCallback(() => {
+        const md = exportAsMarkdown();
+        if (!md) return;
+        const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `mindmap_${new Date().toISOString().slice(0, 10)}.md`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setShowExportMenu(false);
+    }, [exportAsMarkdown]);
+
+    // 导出图片（SVG 格式，兼容性最好）
+    const handleExportPng = useCallback(() => {
+        const flowEl = document.querySelector('.react-flow') as HTMLElement;
+        if (!flowEl) { alert('无法找到画布'); return; }
+
+        // 获取 SVG 边和 HTML 节点
+        const svgEdges = flowEl.querySelector('.react-flow__edges') as SVGElement;
+        const nodeContainer = flowEl.querySelector('.react-flow__nodes') as HTMLElement;
+        if (!svgEdges || !nodeContainer) { alert('画布为空'); return; }
+
+        const viewportEl = flowEl.querySelector('.react-flow__viewport') as HTMLElement;
+        const flowRect = flowEl.getBoundingClientRect();
+        const w = flowRect.width;
+        const h = flowRect.height;
+
+        // 克隆 SVG 边
+        const edgesClone = svgEdges.cloneNode(true) as SVGElement;
+
+        // 克隆节点
+        const nodesClone = nodeContainer.cloneNode(true) as HTMLElement;
+
+        // 收集所有内联样式
+        const styles = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+            .map(s => {
+                if (s.tagName === 'STYLE') return s.outerHTML;
+                return '';
+            }).filter(Boolean).join('\n');
+
+        const svgStr = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+  <rect width="100%" height="100%" fill="#f9fafb"/>
+  <g transform="${viewportEl?.style.transform || ''}">
+    ${edgesClone.innerHTML}
+    <foreignObject width="${w * 3}" height="${h * 3}" x="${-w}" y="${-h}">
+      <div xmlns="http://www.w3.org/1999/xhtml">
+        <style>
+          .react-flow__node { position: absolute; }
+          .react-flow__handle { display: none; }
+          ${styles}
+        </style>
+        ${nodesClone.outerHTML}
+      </div>
+    </foreignObject>
+  </g>
+</svg>`;
+
+        const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `mindmap_${new Date().toISOString().slice(0, 10)}.svg`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setShowExportMenu(false);
+    }, []);
+
+    // 用作上下文
+    const handleUseAsContext = useCallback(() => {
+        const ctx = serializeAsContext();
+        if (!ctx) return;
+        window.dispatchEvent(new CustomEvent('mindmap-use-context', { detail: ctx }));
+    }, [serializeAsContext]);
+
+    // 监听 suggestion 节点点击
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const question = (e as CustomEvent).detail;
+            if (onAskSuggestion) onAskSuggestion(question);
+        };
+        window.addEventListener('mindmap-ask-suggestion', handler);
+        return () => window.removeEventListener('mindmap-ask-suggestion', handler);
+    }, [onAskSuggestion]);
+
     return (
         <div className="relative w-full h-full bg-gray-50 rounded-xl border border-gray-200 overflow-hidden">
             {/* 工具栏 */}
@@ -436,6 +537,48 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend }: MindMapFlowProps) 
                 >
                     <Plus className="w-3.5 h-3.5" />
                 </button>
+
+                {/* 导出下拉 */}
+                {nodes.length > 0 && (
+                    <div className="relative">
+                        <button
+                            onClick={() => setShowExportMenu(!showExportMenu)}
+                            className="flex items-center gap-1 px-2.5 py-1.5 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 transition-all shadow-sm"
+                        >
+                            <Download className="w-3.5 h-3.5" />
+                            <ChevronDown className="w-3 h-3" />
+                        </button>
+                        {showExportMenu && (
+                            <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[140px] z-50">
+                                <button
+                                    onClick={handleExportMd}
+                                    className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                >
+                                    📝 Markdown 大纲
+                                </button>
+                                <button
+                                    onClick={handleExportPng}
+                                    className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                >
+                                    🖼️ 导出 SVG 图片
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* 用作上下文 */}
+                {nodes.length > 0 && (
+                    <button
+                        onClick={handleUseAsContext}
+                        title="将图谱作为下次对话的上下文"
+                        className="flex items-center gap-1 px-2.5 py-1.5 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 transition-all shadow-sm"
+                    >
+                        <MessageCircle className="w-3.5 h-3.5 text-emerald-500" />
+                        用作上下文
+                    </button>
+                )}
+
                 {(nodes.length > 0 || edges.length > 0) && (
                     <span className="flex items-center px-2 py-1.5 bg-violet-50 border border-violet-200 rounded-lg text-[10px] text-violet-600 font-medium">
                         {nodes.length} 节点 · {edges.length} 连线

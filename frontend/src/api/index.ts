@@ -79,8 +79,8 @@ export const api = {
     },
 
     assignments: {
-        submit: async (content: string) => {
-            const res = await http.post('/assignments', { content });
+        submit: async (content: string, fileUrl?: string) => {
+            const res = await http.post('/assignments', { content, file_url: fileUrl || null });
             return res.data;
         },
         mine: async () => {
@@ -141,6 +141,16 @@ export const api = {
         },
         exportAiConversationsCsv: async () => {
             const res = await http.get('/teacher/ai-conversations/export', {
+                responseType: 'blob',
+            });
+            return res.data;
+        },
+        unifiedMessages: async (params: Record<string, unknown> = {}) => {
+            const res = await http.get('/teacher/unified-messages', { params });
+            return res.data;
+        },
+        exportUnifiedCsv: async () => {
+            const res = await http.get('/teacher/export/unified', {
                 responseType: 'blob',
             });
             return res.data;

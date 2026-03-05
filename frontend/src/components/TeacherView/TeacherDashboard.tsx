@@ -27,7 +27,7 @@ import {
     Trash2,
     Star,
     Copy,
-    Bot,
+    Paperclip,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -39,8 +39,9 @@ type TabType =
     | 'analytics'
     | 'knowledge'
     | 'assignments'
-    | 'courses'
-    | 'ai-records';
+    | 'courses';
+
+type ChatTypeFilter = 'all' | 'group' | 'personal';
 
 const CHART_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
@@ -86,11 +87,13 @@ export const TeacherDashboard: React.FC = () => {
     const [scaffolds, setScaffolds] = useState<Array<Record<string, unknown>>>([]);
     const [studentPage, setStudentPage] = useState(1);
     const [msgPage, setMsgPage] = useState(1);
-    const [filterUserId, setFilterUserId] = useState('');
-    const [filterSessionId, setFilterSessionId] = useState('');
     const [editingScaffold, setEditingScaffold] = useState<Record<string, any> | null>(null);
     const [totalStudents, setTotalStudents] = useState(0);
     const [totalMessages, setTotalMessages] = useState(0);
+
+    // 统一消息筛选
+    const [chatTypeFilter, setChatTypeFilter] = useState<ChatTypeFilter>('all');
+    const [filterStudentId, setFilterStudentId] = useState('');
 
     // P1-5 / P2-9: 学习分析
     const [analyticsData, setAnalyticsData] = useState<Record<string, any> | null>(null);
@@ -105,13 +108,6 @@ export const TeacherDashboard: React.FC = () => {
     const [courses, setCourses] = useState<Array<Record<string, unknown>>>([]);
     const [newCourseName, setNewCourseName] = useState('');
     const [newCourseDesc, setNewCourseDesc] = useState('');
-    // AI 对话记录
-    const [aiConvos, setAiConvos] = useState<Array<Record<string, any>>>([]);
-    const [aiConvoTotal, setAiConvoTotal] = useState(0);
-    const [aiConvoPage, setAiConvoPage] = useState(1);
-    const [aiConvoFilter, setAiConvoFilter] = useState('');
-    const [expandedConvoId, setExpandedConvoId] = useState<string | null>(null);
-    const [expandedMessages, setExpandedMessages] = useState<Array<Record<string, any>>>([]);
 
     // 加载统计
     const loadStats = useCallback(async () => {
@@ -135,21 +131,20 @@ export const TeacherDashboard: React.FC = () => {
         }
     }, []);
 
-    // 加载消息
+    // 加载统一消息
     const loadMessages = useCallback(async (page = 1) => {
         try {
-            const params: Record<string, any> = { page, page_size: 30 };
-            if (filterUserId.trim()) params.user_id = filterUserId.trim();
-            if (filterSessionId.trim()) params.session_id = filterSessionId.trim();
+            const params: Record<string, any> = { page, page_size: 30, type: chatTypeFilter };
+            if (filterStudentId) params.student_id = filterStudentId;
 
-            const res = await api.get('/teacher/messages', { params });
-            setMessages(res.data.messages || []);
-            setTotalMessages(res.data.total || 0);
+            const data = await apiTyped.teacher.unifiedMessages(params);
+            setMessages(data.messages || []);
+            setTotalMessages(data.total || 0);
             setMsgPage(page);
         } catch (e) {
             console.error('Load messages failed:', e);
         }
-    }, [filterUserId, filterSessionId]);
+    }, [chatTypeFilter, filterStudentId]);
 
     // 支架启停/编辑
     const toggleScaffold = async (id: string, currentActive: boolean) => {
@@ -225,42 +220,14 @@ export const TeacherDashboard: React.FC = () => {
         }
     }, []);
 
-    // AI 对话记录
-    const loadAiConvos = useCallback(async (page = 1) => {
+    // 统一 CSV 导出
+    const handleExportUnifiedCsv = async () => {
         try {
-            const params: Record<string, any> = { page, page_size: 20 };
-            if (aiConvoFilter.trim()) params.student_id = aiConvoFilter.trim();
-            const data = await apiTyped.teacher.aiConversations(params);
-            setAiConvos(data.conversations || []);
-            setAiConvoTotal(data.total || 0);
-            setAiConvoPage(page);
-        } catch (e) {
-            console.error('Load AI conversations failed:', e);
-        }
-    }, [aiConvoFilter]);
-
-    const handleExpandConvo = async (convoId: string) => {
-        if (expandedConvoId === convoId) {
-            setExpandedConvoId(null);
-            setExpandedMessages([]);
-            return;
-        }
-        try {
-            const msgs = await apiTyped.teacher.aiConversationMessages(convoId);
-            setExpandedConvoId(convoId);
-            setExpandedMessages(msgs);
-        } catch (e) {
-            console.error('Load conversation messages failed:', e);
-        }
-    };
-
-    const handleExportAiConvos = async () => {
-        try {
-            const blob = await apiTyped.teacher.exportAiConversationsCsv();
+            const blob = await apiTyped.teacher.exportUnifiedCsv();
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `ai_conversations_${new Date().toISOString().slice(0, 10)}.csv`;
+            a.download = `unified_messages_${new Date().toISOString().slice(0, 10)}.csv`;
             a.click();
             URL.revokeObjectURL(url);
         } catch (e) {
@@ -281,8 +248,7 @@ export const TeacherDashboard: React.FC = () => {
         if (activeTab === 'knowledge' && documents.length === 0) loadDocuments();
         if (activeTab === 'assignments' && assignments.length === 0) loadAssignments();
         if (activeTab === 'courses' && courses.length === 0) loadCourses();
-        if (activeTab === 'ai-records' && aiConvos.length === 0) loadAiConvos();
-    }, [activeTab, messages.length, loadMessages, analyticsData, loadAnalytics, documents.length, loadDocuments, assignments.length, loadAssignments, courses.length, loadCourses, aiConvos.length, loadAiConvos]);
+    }, [activeTab, messages.length, loadMessages, analyticsData, loadAnalytics, documents.length, loadDocuments, assignments.length, loadAssignments, courses.length, loadCourses]);
 
     // XLSX 导入
     const handleImport = async () => {
@@ -401,8 +367,7 @@ export const TeacherDashboard: React.FC = () => {
     const tabs: { type: TabType; icon: React.ElementType; label: string }[] = [
         { type: 'overview', icon: BarChart3, label: '数据概览' },
         { type: 'students', icon: Users, label: '学生管理' },
-        { type: 'messages', icon: MessageSquare, label: '消息日志' },
-        { type: 'ai-records', icon: Bot, label: 'AI 对话记录' },
+        { type: 'messages', icon: MessageSquare, label: '对话记录' },
         { type: 'scaffolds', icon: BookOpen, label: '支架管理' },
         { type: 'analytics', icon: TrendingUp, label: '学习分析' },
         { type: 'knowledge', icon: Upload, label: '教材上传' },
@@ -543,14 +508,14 @@ export const TeacherDashboard: React.FC = () => {
                     </div>
                 )}
 
-                {/* ────── 消息日志 ────── */}
+                {/* ────── 对话记录（统一视图） ────── */}
                 {activeTab === 'messages' && (
                     <div>
                         <div className="flex flex-col gap-4 mb-6">
                             <div className="flex items-center justify-between">
-                                <h1 className="text-xl font-bold text-gray-900">消息日志</h1>
+                                <h1 className="text-xl font-bold text-gray-900">对话记录</h1>
                                 <div className="flex gap-2">
-                                    <button onClick={handleExportCsv} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">
+                                    <button onClick={handleExportUnifiedCsv} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">
                                         <Download className="w-3.5 h-3.5" /> 导出 CSV
                                     </button>
                                     <button onClick={() => loadMessages(msgPage)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
@@ -558,22 +523,82 @@ export const TeacherDashboard: React.FC = () => {
                                     </button>
                                 </div>
                             </div>
-                            <div className="flex items-center gap-3 bg-white p-3 rounded-lg border border-gray-200">
-                                <input type="text" placeholder="按用户 ID 筛选" value={filterUserId} onChange={(e) => setFilterUserId(e.target.value)} className="px-3 py-1.5 text-sm border border-gray-200 rounded-md focus:outline-none focus:border-indigo-400 flex-1" />
-                                <input type="text" placeholder="按会话 ID 筛选" value={filterSessionId} onChange={(e) => setFilterSessionId(e.target.value)} className="px-3 py-1.5 text-sm border border-gray-200 rounded-md focus:outline-none focus:border-indigo-400 flex-1" />
-                                <button onClick={() => loadMessages(1)} className="px-4 py-1.5 text-sm bg-gray-900 text-white rounded-md hover:bg-gray-800">查询</button>
+                            {/* 筛选区 */}
+                            <div className="flex items-center gap-3 bg-white p-3 rounded-lg border border-gray-200 flex-wrap">
+                                {/* 类型按钮组 */}
+                                <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+                                    {([['all', '全部'], ['group', '小组对话'], ['personal', 'AI 1v1']] as const).map(([val, lbl]) => (
+                                        <button
+                                            key={val}
+                                            onClick={() => { setChatTypeFilter(val); setMsgPage(1); }}
+                                            className={clsx(
+                                                'px-3 py-1.5 text-xs rounded-md transition-colors font-medium',
+                                                chatTypeFilter === val
+                                                    ? 'bg-white text-gray-900 shadow-sm'
+                                                    : 'text-gray-500 hover:text-gray-700'
+                                            )}
+                                        >
+                                            {lbl}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {/* 学生下拉 */}
+                                <select
+                                    value={filterStudentId}
+                                    onChange={(e) => { setFilterStudentId(e.target.value); setMsgPage(1); }}
+                                    className="px-3 py-1.5 text-sm border border-gray-200 rounded-md focus:outline-none focus:border-indigo-400 min-w-[140px]"
+                                >
+                                    <option value="">全部学生</option>
+                                    {students.map((s) => (
+                                        <option key={s.user_id as string} value={s.user_id as string}>
+                                            {s.name as string}
+                                        </option>
+                                    ))}
+                                </select>
+
+                                <button
+                                    onClick={() => loadMessages(1)}
+                                    className="px-4 py-1.5 text-sm bg-gray-900 text-white rounded-md hover:bg-gray-800"
+                                >
+                                    查询
+                                </button>
+                                <button
+                                    onClick={() => { setChatTypeFilter('all'); setFilterStudentId(''); setMsgPage(1); setTimeout(() => loadMessages(1), 0); }}
+                                    className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-600"
+                                >
+                                    重置
+                                </button>
                             </div>
                         </div>
+
+                        {/* 消息列表 */}
                         <div className="space-y-2">
                             {messages.map((m) => {
                                 const sender = m.sender as Record<string, string>;
                                 const isAi = sender?.role === 'ai';
+                                const chatType = m.chat_type as string;
+                                const groupName = m.group_name as string;
                                 return (
                                     <div key={m.message_id as string} className="bg-white rounded-lg border border-gray-200 p-3">
                                         <div className="flex items-center gap-2 mb-1">
-                                            <span className={clsx('text-xs font-medium px-1.5 py-0.5 rounded', isAi ? 'bg-violet-50 text-violet-600' : 'bg-gray-100 text-gray-600')}>{sender?.name || '未知'}</span>
-                                            <span className="text-[10px] text-gray-300">{m.session_id as string}</span>
-                                            <span className="text-[10px] text-gray-300 ml-auto">{new Date(m.created_at as string).toLocaleString('zh-CN')}</span>
+                                            {/* 类型标签 */}
+                                            <span className={clsx(
+                                                'text-[10px] font-medium px-1.5 py-0.5 rounded',
+                                                chatType === 'personal' ? 'bg-violet-50 text-violet-600' : 'bg-emerald-50 text-emerald-600'
+                                            )}>
+                                                {chatType === 'personal' ? '🤖 AI 1v1' : `🟢 ${groupName || '小组'}`}
+                                            </span>
+                                            {/* 发送者 */}
+                                            <span className={clsx(
+                                                'text-xs font-medium px-1.5 py-0.5 rounded',
+                                                isAi ? 'bg-violet-50 text-violet-600' : 'bg-gray-100 text-gray-600'
+                                            )}>
+                                                {sender?.name || '未知'}
+                                            </span>
+                                            <span className="text-[10px] text-gray-300 ml-auto">
+                                                {new Date(m.created_at as string).toLocaleString('zh-CN')}
+                                            </span>
                                         </div>
                                         <p className="text-sm text-gray-700 line-clamp-2">{m.content as string}</p>
                                     </div>
@@ -584,7 +609,7 @@ export const TeacherDashboard: React.FC = () => {
                         {totalMessages > 30 && (
                             <div className="flex items-center justify-center gap-2 mt-4">
                                 <button onClick={() => loadMessages(msgPage - 1)} disabled={msgPage <= 1} className="p-1.5 text-gray-400 hover:text-gray-600 disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button>
-                                <span className="text-xs text-gray-500">第 {msgPage} 页</span>
+                                <span className="text-xs text-gray-500">第 {msgPage} 页 · 共 {totalMessages} 条</span>
                                 <button onClick={() => loadMessages(msgPage + 1)} disabled={msgPage * 30 >= totalMessages} className="p-1.5 text-gray-400 hover:text-gray-600 disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
                             </div>
                         )}
@@ -831,6 +856,33 @@ export const TeacherDashboard: React.FC = () => {
                                     </div>
                                     <p className="text-sm text-gray-700 line-clamp-3 mb-3">{a.content || '(无文本内容)'}</p>
 
+                                    {/* 附件链接 */}
+                                    {a.file_url && (
+                                        <div className="mb-3 bg-gray-50 rounded-lg p-2.5">
+                                            <div className="flex items-center gap-1.5 mb-1.5">
+                                                <Paperclip className="w-3 h-3 text-gray-500" />
+                                                <span className="text-xs font-medium text-gray-600">附件</span>
+                                            </div>
+                                            <div className="space-y-1">
+                                                {a.file_url.split(',').filter(Boolean).map((url: string, i: number) => {
+                                                    const name = url.split('/').pop()?.replace(/^[a-f0-9]+_/, '') || '附件';
+                                                    return (
+                                                        <a
+                                                            key={i}
+                                                            href={url}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-800 hover:underline"
+                                                        >
+                                                            <Download className="w-3 h-3" />
+                                                            {name}
+                                                        </a>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    )}
+
                                     {/* AI 评分结果 */}
                                     {a.ai_review && (
                                         <div className="bg-violet-50 rounded-lg p-3 mb-3">
@@ -896,83 +948,6 @@ export const TeacherDashboard: React.FC = () => {
                     </div>
                 )}
 
-                {/* ────── AI 对话记录 ────── */}
-                {activeTab === 'ai-records' && (
-                    <div>
-                        <div className="flex flex-col gap-4 mb-6">
-                            <div className="flex items-center justify-between">
-                                <h1 className="text-xl font-bold text-gray-900">AI 对话记录</h1>
-                                <div className="flex gap-2">
-                                    <button onClick={handleExportAiConvos} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">
-                                        <Download className="w-3.5 h-3.5" /> 导出 CSV
-                                    </button>
-                                    <button onClick={() => loadAiConvos(aiConvoPage)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
-                                        <RefreshCw className="w-3.5 h-3.5" /> 刷新
-                                    </button>
-                                </div>
-                            </div>
-                            <div className="flex items-center gap-3 bg-white p-3 rounded-lg border border-gray-200">
-                                <input type="text" placeholder="按学生 ID 筛选" value={aiConvoFilter} onChange={(e) => setAiConvoFilter(e.target.value)} className="px-3 py-1.5 text-sm border border-gray-200 rounded-md focus:outline-none focus:border-indigo-400 flex-1" />
-                                <button onClick={() => loadAiConvos(1)} className="px-4 py-1.5 text-sm bg-gray-900 text-white rounded-md hover:bg-gray-800">查询</button>
-                            </div>
-                        </div>
-
-                        <div className="space-y-2">
-                            {aiConvos.map((c) => (
-                                <div key={c.conversation_id} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                                    <button
-                                        onClick={() => handleExpandConvo(c.conversation_id)}
-                                        className="w-full flex items-center justify-between p-4 text-left hover:bg-gray-50 transition-colors"
-                                    >
-                                        <div className="flex flex-col gap-1">
-                                            <span className="text-sm font-medium text-gray-900">{c.title || '新对话'}</span>
-                                            <div className="flex items-center gap-3 text-xs text-gray-400">
-                                                <span className="text-indigo-600 font-medium">{c.student_name}</span>
-                                                <span>{c.student_email}</span>
-                                                <span>{c.message_count} 条消息</span>
-                                                <span>{c.llm_provider}</span>
-                                            </div>
-                                        </div>
-                                        <span className="text-xs text-gray-300">{c.updated_at ? new Date(c.updated_at).toLocaleString('zh-CN') : ''}</span>
-                                    </button>
-
-                                    {expandedConvoId === c.conversation_id && (
-                                        <div className="border-t border-gray-100 p-4 bg-gray-50 space-y-2 max-h-80 overflow-y-auto">
-                                            {expandedMessages.length === 0 && (
-                                                <p className="text-xs text-gray-300 text-center py-4">暂无消息</p>
-                                            )}
-                                            {expandedMessages.map((m) => {
-                                                const isAi = m.sender?.role === 'ai';
-                                                return (
-                                                    <div key={m.message_id} className={clsx('rounded-lg p-3 text-sm', isAi ? 'bg-violet-50' : 'bg-white border border-gray-200')}>
-                                                        <div className="flex items-center gap-2 mb-1">
-                                                            <span className={clsx('text-xs font-medium px-1.5 py-0.5 rounded', isAi ? 'bg-violet-100 text-violet-600' : 'bg-gray-100 text-gray-600')}>
-                                                                {m.sender?.name || '未知'}
-                                                            </span>
-                                                            <span className="text-[10px] text-gray-300 ml-auto">
-                                                                {m.created_at ? new Date(m.created_at).toLocaleString('zh-CN') : ''}
-                                                            </span>
-                                                        </div>
-                                                        <p className="text-gray-700 whitespace-pre-wrap">{m.content}</p>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    )}
-                                </div>
-                            ))}
-                            {aiConvos.length === 0 && <div className="text-center py-8 text-gray-300 text-sm">暂无 AI 对话记录</div>}
-                        </div>
-
-                        {aiConvoTotal > 20 && (
-                            <div className="flex items-center justify-center gap-2 mt-4">
-                                <button onClick={() => loadAiConvos(aiConvoPage - 1)} disabled={aiConvoPage <= 1} className="p-1.5 text-gray-400 hover:text-gray-600 disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button>
-                                <span className="text-xs text-gray-500">第 {aiConvoPage} 页 · 共 {aiConvoTotal} 条</span>
-                                <button onClick={() => loadAiConvos(aiConvoPage + 1)} disabled={aiConvoPage * 20 >= aiConvoTotal} className="p-1.5 text-gray-400 hover:text-gray-600 disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
-                            </div>
-                        )}
-                    </div>
-                )}
 
 
                 {/* ────── P2-11: 课程管理 ────── */}

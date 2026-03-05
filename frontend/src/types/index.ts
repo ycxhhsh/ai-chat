@@ -97,7 +97,7 @@ export interface LLMProvider {
 
 // ── 思维导图 ──
 
-export type MindMapNodeType = 'concept' | 'argument' | 'evidence' | 'question';
+export type MindMapNodeType = 'concept' | 'argument' | 'evidence' | 'question' | 'suggestion';
 
 export interface MindMapNodeData {
     label: string;

@@ -22,6 +22,7 @@ type ChannelType = 'group' | 'ai' | 'assignment';
 export const StudentView: React.FC = () => {
     const [activeChannel, setActiveChannel] = useState<ChannelType>('group');
     const [showMindMap, setShowMindMap] = useState(true);
+    const { setInputMessage } = useScaffoldStore();
 
     const { user } = useAuthStore();
     const { currentGroupId } = useGroupStore();
@@ -210,6 +211,10 @@ export const StudentView: React.FC = () => {
                                 onGenerate={handleGenerateMindMap}
                                 onEditSync={handleMindMapEditSync}
                                 onSend={send}
+                                onAskSuggestion={(question) => {
+                                    setInputMessage(question.replace(/？$/, '') + ' — 请帮我详细探讨这个方向');
+                                    setActiveChannel('ai');
+                                }}
                             />
                         </div>
                     )}

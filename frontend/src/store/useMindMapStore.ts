@@ -21,12 +21,20 @@ export type FlowEdge = Edge;
 
 /** 后端 MindMapNode → React Flow Node */
 function toFlowNode(n: MindMapNode): FlowNode {
-    return {
+    const base: FlowNode = {
         id: n.id,
         type: 'mindMapNode',
         position: n.position ?? { x: 0, y: 0 },
         data: { label: n.label, nodeType: n.type },
     };
+    if (n.type === 'suggestion') {
+        base.style = {
+            opacity: 0.65,
+            border: '2px dashed #a78bfa',
+            borderRadius: '12px',
+        };
+    }
+    return base;
 }
 
 /** 草稿节点：半透明虚线样式 */
@@ -105,6 +113,10 @@ interface MindMapState {
     /* UI */
     setIsGenerating: (generating: boolean) => void;
     clearMindMap: () => void;
+
+    /* 导出 & 上下文 */
+    exportAsMarkdown: () => string;
+    serializeAsContext: () => string;
 }
 
 export const useMindMapStore = create<MindMapState>()((set, get) => ({
@@ -179,9 +191,13 @@ export const useMindMapStore = create<MindMapState>()((set, get) => ({
             ),
         })),
 
-    /** 设置 AI 草稿（半透明预览，不写入 Yjs） */
+    /** 设置 AI 草稿（半透明预览，不写入 Yjs）。
+     *  清空先前已接受的节点/边，避免多次生成后残留旧数据。
+     */
     setDraft: (nodes, edges) =>
         set({
+            nodes: [],
+            edges: [],
             draftNodes: nodes.map(toDraftFlowNode),
             draftEdges: edges.map(toDraftFlowEdge),
             draftRawNodes: nodes,
@@ -232,4 +248,86 @@ export const useMindMapStore = create<MindMapState>()((set, get) => ({
             draftRawEdges: [],
             hasDraft: false,
         }),
+
+    /** 导出 Markdown 大纲 */
+    exportAsMarkdown: () => {
+        const { nodes, edges } = get();
+        if (nodes.length === 0) return '';
+
+        // Build adjacency: parent → children
+        const children = new Map<string, string[]>();
+        const hasParent = new Set<string>();
+        for (const e of edges) {
+            const list = children.get(e.source) || [];
+            list.push(e.target);
+            children.set(e.source, list);
+            hasParent.add(e.target);
+        }
+
+        // Find roots
+        const roots = nodes.filter((n) => !hasParent.has(n.id));
+        if (roots.length === 0) roots.push(nodes[0]);
+
+        // Edge labels map
+        const edgeLabel = new Map<string, string>();
+        for (const e of edges) {
+            edgeLabel.set(`${e.source}->${e.target}`, (e.label as string) || '');
+        }
+
+        // Node map
+        const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+
+        // DFS build markdown
+        const lines: string[] = ['# 思维导图大纲\n'];
+        const visited = new Set<string>();
+
+        const typeEmoji: Record<string, string> = {
+            concept: '📌', argument: '💬', evidence: '📎',
+            question: '❓', suggestion: '💡',
+        };
+
+        function dfs(nodeId: string, depth: number, relLabel?: string) {
+            if (visited.has(nodeId)) return;
+            visited.add(nodeId);
+            const node = nodeMap.get(nodeId);
+            if (!node) return;
+            const d = node.data;
+            const emoji = typeEmoji[d.nodeType] || '•';
+            const indent = '  '.repeat(depth);
+            const rel = relLabel ? ` _(${relLabel})_` : '';
+            const suffix = d.nodeType === 'suggestion' ? ' 🔍' : '';
+            lines.push(`${indent}- ${emoji} **${d.label}**${rel}${suffix}`);
+            for (const childId of children.get(nodeId) || []) {
+                const el = edgeLabel.get(`${nodeId}->${childId}`) || '';
+                dfs(childId, depth + 1, el);
+            }
+        }
+
+        for (const root of roots) dfs(root.id, 0);
+
+        // Add unvisited nodes
+        const unvisited = nodes.filter((n) => !visited.has(n.id));
+        if (unvisited.length > 0) {
+            lines.push('\n## 其他节点\n');
+            for (const n of unvisited) {
+                const emoji = typeEmoji[n.data.nodeType] || '•';
+                lines.push(`- ${emoji} **${n.data.label}**`);
+            }
+        }
+
+        return lines.join('\n');
+    },
+
+    /** 序列化为结构化上下文文本 */
+    serializeAsContext: () => {
+        const { nodes, edges } = get();
+        if (nodes.length === 0) return '';
+        const nodeLines = nodes.map((n) => `[${n.data.nodeType}] ${n.data.label}`).join('\n');
+        const edgeLines = edges.map((e) => {
+            const src = nodes.find((n) => n.id === e.source);
+            const tgt = nodes.find((n) => n.id === e.target);
+            return `${src?.data.label || '?'} --${(e.label as string) || '相关'}--> ${tgt?.data.label || '?'}`;
+        }).join('\n');
+        return `当前思维导图结构：\n\n节点：\n${nodeLines}\n\n关系：\n${edgeLines}`;
+    },
 }));

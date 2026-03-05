@@ -47,6 +47,8 @@ services:
       - "8000:8000"
     env_file:
       - ./backend/.env
+    volumes:
+      - uploads_data:/opt/cothink/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,3 +87,4 @@ services:
 volumes:
   postgres_data:
   yjs_data:
+  uploads_data:

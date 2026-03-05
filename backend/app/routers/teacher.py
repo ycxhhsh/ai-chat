@@ -627,3 +627,160 @@ async def get_ai_conversation_messages(
     ]
 
 
+# ────────────────────── 统一对话记录查询 ──────────────────────
+
+@router.get("/unified-messages")
+async def list_unified_messages(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _teacher: Annotated[User, Depends(require_teacher)],
+    type: str = Query("all", pattern="^(all|group|personal)$"),
+    student_id: str | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(30, ge=1, le=200),
+):
+    """合并小组消息 + AI 1v1 对话的统一列表。
+
+    - type=group    → conversation_id IS NULL（小组聊天）
+    - type=personal → conversation_id IS NOT NULL（AI 1v1）
+    - type=all      → 全部
+    """
+    offset = (page - 1) * page_size
+
+    # 基础查询：Message LEFT JOIN Group（获取 group_name）
+    q = (
+        select(
+            Message,
+            Group.name.label("group_name"),
+        )
+        .outerjoin(Group, Message.session_id == Group.id)
+        .order_by(Message.created_at.desc())
+    )
+
+    # 类型筛选
+    if type == "group":
+        q = q.where(Message.conversation_id.is_(None))
+    elif type == "personal":
+        q = q.where(Message.conversation_id.is_not(None))
+
+    # 学生筛选
+    if student_id:
+        q = q.where(
+            (_jq(Message.sender, "id") == student_id)
+            | (Message.recipient_id == student_id)
+        )
+
+    # 总数
+    from sqlalchemy import text as sa_text
+    count_sub = q.subquery()
+    total = (await db.execute(
+        select(func.count()).select_from(count_sub)
+    )).scalar() or 0
+
+    result = await db.execute(q.offset(offset).limit(page_size))
+    rows = result.all()
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "messages": [
+            {
+                "message_id": m.message_id,
+                "session_id": m.session_id,
+                "conversation_id": m.conversation_id,
+                "chat_type": "personal" if m.conversation_id else "group",
+                "group_name": group_name or "",
+                "sender": m.sender if isinstance(m.sender, dict) else {},
+                "content": m.content,
+                "timing": m.timing,
+                "metadata_info": m.metadata_info if isinstance(m.metadata_info, dict) else {},
+                "created_at": m.created_at.isoformat() if m.created_at else "",
+            }
+            for m, group_name in rows
+        ],
+    }
+
+
+# ────────────────────── 统一 CSV 导出 ──────────────────────
+
+@router.get("/export/unified")
+async def export_unified_csv(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _teacher: Annotated[User, Depends(require_teacher)],
+):
+    """统一导出所有消息（小组 + AI 1v1）为 CSV。
+
+    - session_type: personalchat / groupchat
+    - message_id:   MSG-组名-001（小组） / MSG-001（个人）
+    - relative_minute: 以 session 内第一条消息为基准的分钟偏移
+    """
+    # 一次性查所有消息 + 组名
+    result = await db.execute(
+        select(Message, Group.name.label("group_name"))
+        .outerjoin(Group, Message.session_id == Group.id)
+        .order_by(Message.created_at.asc())
+        .limit(50000)
+    )
+    rows = result.all()
+
+    # 预计算每个 session 的第一条消息时间 & 每 session 递增序号
+    first_time: dict[str, datetime] = {}
+    session_counters: dict[str, int] = {}
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "message_id", "session_type", "group_name",
+        "sender_name", "sender_role", "content",
+        "absolute_time", "relative_minute",
+        "is_scaffold_used", "scaffold_name",
+    ])
+
+    for m, group_name in rows:
+        sender = m.sender if isinstance(m.sender, dict) else {}
+        meta = m.metadata_info if isinstance(m.metadata_info, dict) else {}
+        scaffold_info = meta.get("scaffold_info", {}) or {}
+
+        is_personal = m.conversation_id is not None
+        session_type = "personalchat" if is_personal else "groupchat"
+        gname = group_name or ""
+
+        # 每 session 递增序号
+        session_key = m.conversation_id if is_personal else m.session_id
+        session_counters[session_key] = session_counters.get(session_key, 0) + 1
+        seq = session_counters[session_key]
+
+        # 可读 message_id
+        if is_personal:
+            readable_id = f"MSG-{seq:03d}"
+        else:
+            readable_id = f"MSG-{gname}-{seq:03d}" if gname else f"MSG-{seq:03d}"
+
+        # 相对分钟数
+        rel_min = ""
+        if m.created_at and session_key:
+            if session_key not in first_time:
+                first_time[session_key] = m.created_at
+            delta = (m.created_at - first_time[session_key]).total_seconds()
+            rel_min = round(delta / 60, 1)
+
+        writer.writerow([
+            readable_id,
+            session_type,
+            gname,
+            sender.get("name", ""),
+            sender.get("role", ""),
+            m.content,
+            m.created_at.isoformat() if m.created_at else "",
+            rel_min,
+            meta.get("is_scaffold_used", False),
+            scaffold_info.get("name", ""),
+        ])
+
+    output.seek(0)
+    bom = "\ufeff"
+    return StreamingResponse(
+        iter([bom + output.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=unified_messages.csv"},
+    )

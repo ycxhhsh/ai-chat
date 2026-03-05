@@ -123,21 +123,24 @@ MINDMAP_EXTRACTION_PROMPT = """
 3. 关系类型包括但不限于：包含、导致、对比、支持、反对、举例
 4. 每个节点需要有一个简洁的标签（1-6个字）
 5. 每条边需要标注关系类型
+6. **重要**：在已有节点之外，额外生成 1-3 个 type 为 `suggestion` 的"待探索"节点，标出对话中尚未覆盖但逻辑上应该探索的方向（缺失的逻辑环、待深入的领域）。这些建议节点的 label 应以"？"结尾（如"备考策略？"），并用边连接到相关已有节点，edge label 标注为"待探索"。
 
 请严格按以下 JSON 格式输出，不要包含 Markdown 格式标记：
 {
     "nodes": [
         {"id": "n1", "label": "批判性思维", "type": "concept"},
         {"id": "n2", "label": "逻辑推理", "type": "concept"},
-        {"id": "n3", "label": "证据评估", "type": "argument"}
+        {"id": "n3", "label": "证据评估", "type": "argument"},
+        {"id": "s1", "label": "实际应用？", "type": "suggestion"}
     ],
     "edges": [
         {"source": "n1", "target": "n2", "label": "包含"},
-        {"source": "n1", "target": "n3", "label": "需要"}
+        {"source": "n1", "target": "n3", "label": "需要"},
+        {"source": "n1", "target": "s1", "label": "待探索"}
     ]
 }
 
-节点 type 可选：concept（概念）、argument（论点）、evidence（论据）、question（问题）
+节点 type 可选：concept（概念）、argument（论点）、evidence（论据）、question（问题）、suggestion（待探索建议）
 """
 
 # ── 7. 作业自动评分 ──

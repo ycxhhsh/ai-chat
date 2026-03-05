@@ -13,5 +13,5 @@ pypdf
 python-docx
 openpyxl
 redis>=5.0.0
-httpx
+httpx[http2]
 alembic

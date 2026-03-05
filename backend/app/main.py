@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.db.session import engine
 from app.routers.auth import router as auth_router
@@ -21,6 +23,7 @@ from app.routers.assignments import router as assignments_router
 from app.routers.observability import router as observability_router
 from app.routers.courses import router as courses_router
 from app.routers.ai_conversations import router as ai_conversations_router
+from app.routers.upload import router as upload_router
 from app.websockets.router import router as websocket_router
 
 logger = logging.getLogger(__name__)
@@ -103,7 +106,13 @@ app.include_router(assignments_router)
 app.include_router(observability_router)
 app.include_router(courses_router)
 app.include_router(ai_conversations_router)
+app.include_router(upload_router)
 
 # ── WebSocket ──
 app.include_router(websocket_router)
+
+# ── 静态文件：上传附件 ──
+_upload_dir = os.environ.get("UPLOAD_DIR", "/opt/cothink/uploads")
+os.makedirs(_upload_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=_upload_dir), name="uploads")
 
