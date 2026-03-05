@@ -69,6 +69,10 @@ export const api = {
             const res = await http.post('/groups/join', { invite_code: inviteCode });
             return res.data;
         },
+        delete: async (groupId: string) => {
+            const res = await http.delete(`/groups/${groupId}`);
+            return res.data;
+        },
     },
 
     scaffolds: {

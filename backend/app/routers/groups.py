@@ -122,3 +122,33 @@ async def list_my_groups(
         )
         for g in groups
     ]
+
+
+@router.delete("/{group_id}")
+async def delete_group(
+    group_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """删除小组（仅创建人可操作）。"""
+    from sqlalchemy import delete as sql_delete
+
+    result = await db.execute(
+        select(Group).where(Group.id == group_id)
+    )
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="小组不存在")
+    if group.created_by != str(user.user_id):
+        raise HTTPException(status_code=403, detail="只有小组创建人才能删除")
+
+    # 先删成员再删小组
+    await db.execute(
+        sql_delete(GroupMember).where(GroupMember.group_id == group_id)
+    )
+    await db.execute(
+        sql_delete(Group).where(Group.id == group_id)
+    )
+    await db.commit()
+    return {"status": "deleted", "group_id": group_id}
+

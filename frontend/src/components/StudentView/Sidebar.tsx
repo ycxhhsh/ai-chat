@@ -41,7 +41,7 @@ function timeAgo(dateStr: string): string {
 
 export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => {
     const { user, logout } = useAuthStore();
-    const { groups, currentGroupId, fetchGroups, createGroup, joinGroup, setCurrentGroup } = useGroupStore();
+    const { groups, currentGroupId, fetchGroups, createGroup, joinGroup, deleteGroup, setCurrentGroup } = useGroupStore();
     const {
         conversations,
         currentConversationId,
@@ -269,24 +269,71 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
                         {groups.length === 0 ? (
                             <p className="text-xs text-gray-300 text-center py-4">暂无小组</p>
                         ) : (
-                            groups.map((g) => (
-                                <button
-                                    key={g.id}
-                                    onClick={() => {
-                                        setCurrentGroup(g.id);
-                                        onChannelChange('group');
-                                    }}
-                                    className={clsx(
-                                        'w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors mb-0.5',
-                                        g.id === currentGroupId
-                                            ? 'bg-gray-100 text-gray-900 font-medium'
-                                            : 'text-gray-600 hover:bg-gray-50'
-                                    )}
-                                >
-                                    <Users className="w-4 h-4 text-gray-400" />
-                                    <span className="truncate">{g.name}</span>
-                                </button>
-                            ))
+                            groups.map((g) => {
+                                const isCreator = user?.user_id === g.created_by;
+                                return (
+                                    <div
+                                        key={g.id}
+                                        className={clsx(
+                                            'group w-full rounded-lg mb-1 transition-colors',
+                                            g.id === currentGroupId
+                                                ? 'bg-gray-100'
+                                                : 'hover:bg-gray-50'
+                                        )}
+                                    >
+                                        <button
+                                            onClick={() => {
+                                                setCurrentGroup(g.id);
+                                                onChannelChange('group');
+                                            }}
+                                            className="w-full flex items-center gap-2 px-3 py-2 text-left"
+                                        >
+                                            <Users className="w-4 h-4 text-gray-400 shrink-0" />
+                                            <div className="flex-1 min-w-0">
+                                                <span className={clsx(
+                                                    'text-sm truncate block',
+                                                    g.id === currentGroupId ? 'text-gray-900 font-medium' : 'text-gray-600'
+                                                )}>
+                                                    {g.name}
+                                                </span>
+                                                <span className="text-[10px] text-gray-400 flex items-center gap-1 mt-0.5">
+                                                    邀请码:
+                                                    <code className="bg-gray-100 px-1 py-0.5 rounded font-mono text-indigo-500 select-all">
+                                                        {g.invite_code}
+                                                    </code>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            navigator.clipboard.writeText(g.invite_code);
+                                                        }}
+                                                        className="p-0.5 text-gray-300 hover:text-indigo-500 transition-colors"
+                                                        title="复制邀请码"
+                                                    >
+                                                        <Copy className="w-3 h-3" />
+                                                    </button>
+                                                </span>
+                                            </div>
+                                            {isCreator && (
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        if (confirm(`确定删除小组「${g.name}」？此操作不可恢复。`)) {
+                                                            deleteGroup(g.id).catch(err => {
+                                                                console.error('Delete group failed:', err);
+                                                                alert('删除失败');
+                                                            });
+                                                        }
+                                                    }}
+                                                    className="opacity-0 group-hover:opacity-100 p-1 text-gray-300 hover:text-red-500 rounded transition-all shrink-0"
+                                                    title="删除小组"
+                                                >
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                </button>
+                                            )}
+                                        </button>
+                                    </div>
+                                );
+                            })
                         )}
                     </>
                 )}

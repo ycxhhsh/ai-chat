@@ -290,7 +290,7 @@ async def get_analytics(
             .group_by(_jq(Message.metadata_info, 'scaffold_info', 'name'))
         )
         scaffold_heatmap = [
-            {"name": row.scaffold_name, "count": row.usage_count}
+            {"scaffold_name": row.scaffold_name, "count": row.usage_count}
             for row in result if row.scaffold_name
         ]
     except Exception as e:
@@ -330,13 +330,13 @@ async def get_analytics(
             total = data["total"] + ai_count
             ai_intervention_rate.append({
                 "user_id": uid,
-                "name": data["name"],
+                "student_name": data["name"],
                 "student_messages": data["total"],
                 "ai_replies": ai_count,
-                "rate": round(ai_count / total * 100, 1) if total > 0 else 0,
+                "ai_ratio": round(ai_count / total * 100, 1) if total > 0 else 0,
             })
 
-        ai_intervention_rate.sort(key=lambda x: x["rate"], reverse=True)
+        ai_intervention_rate.sort(key=lambda x: x["ai_ratio"], reverse=True)
     except Exception as e:
         logger.warning("AI intervention rate query failed: %s", e)
 
@@ -345,15 +345,15 @@ async def get_analytics(
     try:
         result = await db.execute(
             select(
-                func.to_char(Message.created_at, 'YYYY-MM-DD HH24:00').label("hour"),
+                cast(func.date(Message.created_at), SAString).label("day"),
                 func.count().label("count"),
             )
-            .group_by(func.to_char(Message.created_at, 'YYYY-MM-DD HH24:00'))
-            .order_by(func.to_char(Message.created_at, 'YYYY-MM-DD HH24:00'))
-            .limit(168)  # 最近 7 天按小时
+            .group_by(func.date(Message.created_at))
+            .order_by(func.date(Message.created_at))
+            .limit(30)  # 最近 30 天按日
         )
         participation_curve = [
-            {"time": row.hour, "count": row.count}
+            {"date": row.day, "count": row.count}
             for row in result
         ]
     except Exception as e:
@@ -407,12 +407,37 @@ async def get_analytics(
     except Exception as e:
         logger.warning("Scaffold dependency query failed: %s", e)
 
+    # 6. 活跃会话
+    active_sessions = []
+    try:
+        result = await db.execute(
+            select(
+                Message.session_id,
+                func.count().label("message_count"),
+                func.max(Message.created_at).label("last_activity"),
+            )
+            .group_by(Message.session_id)
+            .order_by(func.max(Message.created_at).desc())
+            .limit(10)
+        )
+        active_sessions = [
+            {
+                "session_id": row.session_id,
+                "message_count": row.message_count,
+                "last_activity": row.last_activity.isoformat() if row.last_activity else "",
+            }
+            for row in result
+        ]
+    except Exception as e:
+        logger.warning("Active sessions query failed: %s", e)
+
     return {
-        "scaffold_heatmap": scaffold_heatmap,
+        "scaffold_usage": scaffold_heatmap,
         "ai_intervention_rate": ai_intervention_rate,
-        "participation_curve": participation_curve,
+        "participation_trend": participation_curve,
         "discussion_depth": discussion_depth,
         "scaffold_dependency": scaffold_dependency,
+        "active_sessions": active_sessions,
     }
 
 
