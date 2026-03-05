@@ -4,6 +4,7 @@
 import React, { useState } from 'react';
 import { Send } from 'lucide-react';
 import { useScaffoldStore } from '../../store/useScaffoldStore';
+import { generateUUID } from '../../utils/uuid';
 
 interface Props {
     onSend: (content: string, metadata?: Record<string, unknown>) => void;
@@ -36,7 +37,7 @@ export const ChatInput: React.FC<Props> = ({ onSend, disabled, isAiChannel }) =>
         }
 
         // 生成 request_id 用于消息 ACK
-        metadata.request_id = crypto.randomUUID();
+        metadata.request_id = generateUUID();
 
         onSend(content, metadata);
         setLocalInput('');

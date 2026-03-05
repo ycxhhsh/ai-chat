@@ -15,6 +15,7 @@ import { useChatStore } from '../store/useChatStore';
 import { useScaffoldStore } from '../store/useScaffoldStore';
 import { useMindMapStore } from '../store/useMindMapStore';
 import type { ChatMessage } from '../types';
+import { generateUUID } from '../utils/uuid';
 
 // 心跳配置
 const HEARTBEAT_TIMEOUT = 60_000;  // 60 秒内没收到 PING 视为断连（宽松值，避免 LLM 繁忙时误断）
@@ -153,7 +154,7 @@ export function useWebSocket(sessionId: string | null) {
                 // 防御性处理：正常情况下后端会拦截此事件并转为 CHAT_MESSAGE，
                 // 但若意外到达前端，需手动构造最终消息以免流式内容丢失
                 const doneMsg: ChatMessage = {
-                    message_id: (data.task_id as string) || crypto.randomUUID(),
+                    message_id: (data.task_id as string) || generateUUID(),
                     session_id: (data.session_id as string) || '',
                     sender: { id: 'ai', name: 'AI 助教', role: 'ai' },
                     content: (data.content as string) || '',

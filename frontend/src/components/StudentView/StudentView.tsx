@@ -13,6 +13,7 @@ import { Sidebar } from './Sidebar';
 import { ChatInterface } from '../Chat/ChatInterface';
 import { MindMapPanel } from '../MindMap/MindMapPanel';
 import { AssignmentPanel } from './AssignmentPanel';
+import { generateUUID } from '../../utils/uuid';
 import { PanelRight, PanelRightClose } from 'lucide-react';
 import type { ChatMessage } from '../../types';
 
@@ -82,7 +83,7 @@ export const StudentView: React.FC = () => {
             // 合并 ChatInput 传入的支架元数据
             const scaffoldInfo = metadata?.scaffold_info || null;
             const isScaffoldUsed = metadata?.is_scaffold_used || false;
-            const requestId = (metadata?.request_id as string) || crypto.randomUUID();
+            const requestId = (metadata?.request_id as string) || generateUUID();
 
             // 构造本地乐观消息
             const optimisticMsg: ChatMessage = {
