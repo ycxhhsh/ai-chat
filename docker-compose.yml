@@ -1,0 +1,87 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: cothink-postgres
+    environment:
+      POSTGRES_DB: cothink
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:alpine
+    container_name: cothink-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  y-websocket:
+    image: yjs/y-websocket
+    container_name: cothink-yjs
+    ports:
+      - "1234:1234"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "1234"
+      YPERSISTENCE: "./dbDir"
+    volumes:
+      - yjs_data:/usr/src/app/dbDir
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    container_name: cothink-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ai-worker:
+    build: ./backend
+    container_name: cothink-ai-worker
+    command: python -m app.infra.ai_worker
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      replicas: 1
+
+  grading-worker:
+    build: ./backend
+    container_name: cothink-grading-worker
+    command: python -m app.infra.grading_worker
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  yjs_data:

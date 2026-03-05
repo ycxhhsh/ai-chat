@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+sqlalchemy[asyncio]
+asyncpg
+pydantic-settings
+email-validator
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt
+python-multipart
+pgvector
+pypdf
+python-docx
+openpyxl
+redis>=5.0.0
+httpx
+alembic

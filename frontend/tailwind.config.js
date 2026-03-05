@@ -1,0 +1,32 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+    content: [
+        "./index.html",
+        "./src/**/*.{js,ts,jsx,tsx}",
+    ],
+    theme: {
+        extend: {
+            colors: {
+                gray: {
+                    50: '#F9FAFB',
+                    100: '#F3F4F6',
+                    200: '#E5E7EB',
+                    300: '#D1D5DB',
+                    400: '#9CA3AF',
+                    800: '#1F2937',
+                    900: '#111827',
+                },
+                primary: {
+                    DEFAULT: '#1a73e8',
+                    foreground: '#FFFFFF',
+                    hover: '#1557b0',
+                    light: '#e8f0fe',
+                }
+            },
+            fontFamily: {
+                sans: ['Inter', 'system-ui', 'sans-serif'],
+            }
+        },
+    },
+    plugins: [],
+}
