@@ -243,6 +243,12 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
                             ))
                         )}
                     </>
+                ) : activeChannel === 'assignment' ? (
+                    /* ── 作业频道：不显示小组列表 ── */
+                    <div className="text-center py-8">
+                        <FileText className="w-8 h-8 text-gray-200 mx-auto mb-2" />
+                        <p className="text-xs text-gray-400">在右侧面板中提交和查看作业</p>
+                    </div>
                 ) : (
                     /* ── 小组列表 ── */
                     <>
