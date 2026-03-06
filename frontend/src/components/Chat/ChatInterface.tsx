@@ -75,14 +75,11 @@ export const ChatInterface: React.FC<Props> = ({
                 )}
 
                 {messages.map((msg) => (
-                    <div key={msg.message_id} className="flex max-w-[80%]" style={{
-                        marginLeft: msg.sender.id === user?.user_id ? 'auto' : undefined,
-                    }}>
-                        <MessageBubble
-                            message={msg}
-                            isOwn={msg.sender.id === user?.user_id}
-                        />
-                    </div>
+                    <MessageBubble
+                        key={msg.message_id}
+                        message={msg}
+                        isOwn={msg.sender.id === user?.user_id}
+                    />
                 ))}
 
                 {/* AI 打字中 */}
