@@ -13,14 +13,14 @@ interface DraftOverlayProps {
 }
 
 export function DraftOverlay({ onSend }: DraftOverlayProps) {
-    const { hasDraft, draftRawNodes, acceptDraft, rejectDraft } = useMindMapStore();
+    const { hasDraft, draftRawNodes, acceptDraft, rejectDraft, currentMapKey } = useMindMapStore();
 
     if (!hasDraft) return null;
 
     const handleAccept = () => {
         const { nodes, edges } = acceptDraft();
-        // 发送 WS 事件让后端持久化
-        onSend('MINDMAP_ACCEPT_DRAFT', { nodes, edges });
+        // 发送 WS 事件让后端持久化（包含 map_key）
+        onSend('MINDMAP_ACCEPT_DRAFT', { nodes, edges, map_key: currentMapKey || '' });
     };
 
     const handleReject = () => {

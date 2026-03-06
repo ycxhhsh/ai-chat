@@ -1,7 +1,7 @@
 /**
  * 聊天输入框组件。
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Send } from 'lucide-react';
 import { useScaffoldStore } from '../../store/useScaffoldStore';
 import { generateUUID } from '../../utils/uuid';
@@ -15,6 +15,18 @@ interface Props {
 export const ChatInput: React.FC<Props> = ({ onSend, disabled, isAiChannel }) => {
     const { inputMessage, setInputMessage, activeScaffoldId, setActiveScaffold, scaffolds } = useScaffoldStore();
     const [localInput, setLocalInput] = useState('');
+
+    // 监听思维导图"用作上下文"事件
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const ctx = (e as CustomEvent).detail as string;
+            if (ctx) {
+                setLocalInput((prev) => prev ? `${prev}\n\n${ctx}` : ctx);
+            }
+        };
+        window.addEventListener('mindmap-use-context', handler);
+        return () => window.removeEventListener('mindmap-use-context', handler);
+    }, []);
 
     // 同步支架填充的内容
     const currentValue = inputMessage || localInput;

@@ -379,6 +379,14 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
                         type="text"
                         value={inviteCode}
                         onChange={(e) => setInviteCode(e.target.value)}
+                        onPaste={(e) => {
+                            e.stopPropagation();
+                            const text = e.clipboardData.getData('text');
+                            if (text) {
+                                e.preventDefault();
+                                setInviteCode(text.trim());
+                            }
+                        }}
                         placeholder="输入邀请码"
                         className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                         autoFocus
