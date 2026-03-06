@@ -15,7 +15,7 @@ import { ChatInterface } from '../Chat/ChatInterface';
 import { MindMapPanel } from '../MindMap/MindMapPanel';
 import { AssignmentPanel } from './AssignmentPanel';
 import { generateUUID } from '../../utils/uuid';
-import { PanelRight, PanelRightClose, Menu } from 'lucide-react';
+import { PanelRight, PanelRightClose, Menu, MessageSquare as ChatIcon, GitBranch } from 'lucide-react';
 import type { ChatMessage } from '../../types';
 
 type ChannelType = 'group' | 'ai' | 'assignment';
@@ -24,6 +24,7 @@ export const StudentView: React.FC = () => {
     const [activeChannel, setActiveChannel] = useState<ChannelType>('group');
     const [showMindMap, setShowMindMap] = useState(true);
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [mobilePanel, setMobilePanel] = useState<'chat' | 'mindmap'>('chat');
     const { setInputMessage } = useScaffoldStore();
 
     const { user } = useAuthStore();
@@ -227,24 +228,55 @@ export const StudentView: React.FC = () => {
                             {channelTitles[activeChannel]}
                         </h1>
                     </div>
-                    {activeChannel !== 'assignment' && (
-                        <button
-                            onClick={() => setShowMindMap(!showMindMap)}
-                            className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-500 hover:text-primary hover:bg-primary-light rounded-lg transition-colors"
-                        >
-                            {showMindMap ? (
-                                <><PanelRightClose className="w-4 h-4" /> 隐藏导图</>
-                            ) : (
-                                <><PanelRight className="w-4 h-4" /> 显示导图</>
-                            )}
-                        </button>
-                    )}
+                    <div className="flex items-center gap-2">
+                        {/* 移动端聊天/导图切换（仅非作业页面） */}
+                        {activeChannel !== 'assignment' && (
+                            <div className="flex md:hidden bg-gray-100 rounded-lg p-0.5">
+                                <button
+                                    onClick={() => setMobilePanel('chat')}
+                                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${mobilePanel === 'chat'
+                                            ? 'bg-white text-gray-900 shadow-sm'
+                                            : 'text-gray-500'
+                                        }`}
+                                >
+                                    <ChatIcon className="w-3.5 h-3.5 inline mr-1" />对话
+                                </button>
+                                <button
+                                    onClick={() => setMobilePanel('mindmap')}
+                                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${mobilePanel === 'mindmap'
+                                            ? 'bg-white text-gray-900 shadow-sm'
+                                            : 'text-gray-500'
+                                        }`}
+                                >
+                                    <GitBranch className="w-3.5 h-3.5 inline mr-1" />导图
+                                </button>
+                            </div>
+                        )}
+                        {/* 桌面端导图切换 */}
+                        {activeChannel !== 'assignment' && (
+                            <button
+                                onClick={() => setShowMindMap(!showMindMap)}
+                                className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-500 hover:text-primary hover:bg-primary-light rounded-lg transition-colors"
+                            >
+                                {showMindMap ? (
+                                    <><PanelRightClose className="w-4 h-4" /> 隐藏导图</>
+                                ) : (
+                                    <><PanelRight className="w-4 h-4" /> 显示导图</>
+                                )}
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 {/* 聊天 + 思维导图 */}
                 <div className="flex-1 flex overflow-hidden p-2 md:p-3 gap-2 md:gap-3">
-                    {/* 聊天区：移动端全宽 */}
-                    <div className={showMindMap && activeChannel !== 'assignment' ? 'w-full md:w-1/2' : 'w-full'}>
+                    {/* 聊天区：移动端根据 mobilePanel 显示/隐藏，桌面端始终显示 */}
+                    <div className={`
+                        ${activeChannel === 'assignment' ? 'w-full' :
+                            showMindMap ? 'md:w-1/2' : 'w-full'}
+                        ${mobilePanel === 'chat' ? 'block' : 'hidden'} md:block
+                        w-full
+                    `}>
                         {activeChannel === 'assignment' ? (
                             <AssignmentPanel />
                         ) : (
@@ -258,9 +290,13 @@ export const StudentView: React.FC = () => {
                         )}
                     </div>
 
-                    {/* 思维导图区：移动端隐藏，仅桌面 md+ 显示 */}
-                    {showMindMap && activeChannel !== 'assignment' && (
-                        <div className="hidden md:block md:w-1/2">
+                    {/* 思维导图区：移动端根据 mobilePanel 显示/隐藏，桌面端根据 showMindMap */}
+                    {activeChannel !== 'assignment' && (
+                        <div className={`
+                            w-full md:w-1/2
+                            ${mobilePanel === 'mindmap' ? 'block' : 'hidden'}
+                            ${showMindMap ? 'md:block' : 'md:hidden'}
+                        `}>
                             <MindMapPanel
                                 onGenerate={handleGenerateMindMap}
                                 onEditSync={handleMindMapEditSync}
@@ -269,6 +305,7 @@ export const StudentView: React.FC = () => {
                                 onAskSuggestion={(question) => {
                                     setInputMessage(question.replace(/？$/, '') + ' — 请帮我详细探讨这个方向');
                                     setActiveChannel('ai');
+                                    setMobilePanel('chat');
                                 }}
                             />
                         </div>
