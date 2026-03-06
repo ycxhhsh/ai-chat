@@ -22,12 +22,16 @@ export type FlowEdge = Edge;
 // ── 转换函数 ──
 
 /** 后端 MindMapNode → React Flow Node */
-function toFlowNode(n: MindMapNode): FlowNode {
+function toFlowNode(n: MindMapNode & { source_message_id?: string }): FlowNode {
     const base: FlowNode = {
         id: n.id,
         type: 'mindMapNode',
         position: n.position ?? { x: 0, y: 0 },
-        data: { label: n.label, nodeType: n.type },
+        data: {
+            label: n.label,
+            nodeType: n.type,
+            ...(n.source_message_id ? { source_message_id: n.source_message_id } : {}),
+        },
     };
     if (n.type === 'suggestion') {
         base.style = {
@@ -105,7 +109,7 @@ interface MindMapState {
     onEdgesChange: (changes: EdgeChange<FlowEdge>[]) => void;
 
     /* 增删改 */
-    addNode: (node: MindMapNode) => void;
+    addNode: (node: MindMapNode & { source_message_id?: string }) => void;
     removeNode: (nodeId: string) => void;
     updateNode: (nodeId: string, updates: Partial<MindMapNode>) => void;
     addEdge: (edge: MindMapEdge) => void;

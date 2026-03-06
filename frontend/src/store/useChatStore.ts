@@ -20,6 +20,9 @@ interface ChatState {
     // 会话
     sessionId: string;
 
+    // 跨维度溯源
+    highlightedMsgId: string | null;
+
     // Actions
     addGroupMessage: (msg: ChatMessage) => void;
     addAiMessage: (msg: ChatMessage) => void;
@@ -32,6 +35,7 @@ interface ChatState {
     setSelectedProvider: (provider: string) => void;
     setAvailableProviders: (providers: LLMProvider[]) => void;
     setSessionId: (id: string) => void;
+    setHighlightedMsgId: (id: string | null) => void;
     clearMessages: () => void;
 }
 
@@ -43,6 +47,7 @@ export const useChatStore = create<ChatState>()((set) => ({
     selectedProvider: 'deepseek',
     availableProviders: [],
     sessionId: '',
+    highlightedMsgId: null,
 
     addGroupMessage: (msg) =>
         set((s) => ({
@@ -94,6 +99,8 @@ export const useChatStore = create<ChatState>()((set) => ({
 
     setSessionId: (id) => set({ sessionId: id }),
 
+    setHighlightedMsgId: (id) => set({ highlightedMsgId: id }),
+
     clearMessages: () =>
-        set({ groupMessages: [], aiMessages: [], aiStreamContent: '' }),
+        set({ groupMessages: [], aiMessages: [], aiStreamContent: '', highlightedMsgId: null }),
 }));

@@ -1,6 +1,7 @@
 /**
  * 聊天界面主组件。
  * 组合 MessageBubble + ChatInput + ScaffoldBar + LLMSelector。
+ * Sprint 2: 支持跨维度溯源滚动高亮。
  */
 import React, { useEffect, useRef } from 'react';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -27,7 +28,7 @@ export const ChatInterface: React.FC<Props> = ({
     isAiChannel = false,
 }) => {
     const { user } = useAuthStore();
-    const { isAiTyping, aiStreamContent } = useChatStore();
+    const { isAiTyping, aiStreamContent, highlightedMsgId } = useChatStore();
     const scrollRef = useRef<HTMLDivElement>(null);
 
     // 自动滚动到底部
@@ -36,6 +37,15 @@ export const ChatInterface: React.FC<Props> = ({
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
     }, [messages, aiStreamContent]);
+
+    // 跨维度溯源：滚动到高亮消息
+    useEffect(() => {
+        if (!highlightedMsgId) return;
+        const el = document.getElementById(`msg-${highlightedMsgId}`);
+        if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }, [highlightedMsgId]);
 
     return (
         <div className="flex flex-col h-full bg-white rounded-xl border border-gray-200 overflow-hidden">

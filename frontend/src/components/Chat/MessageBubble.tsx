@@ -1,10 +1,12 @@
 /**
  * 消息气泡组件。
+ * 支持 HTML5 拖拽到思维导图画布。
  */
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import type { ChatMessage } from '../../types';
+import { useChatStore } from '../../store/useChatStore';
 import clsx from 'clsx';
-import { Check, CheckCheck, AlertCircle } from 'lucide-react';
+import { Check, CheckCheck, AlertCircle, GripVertical } from 'lucide-react';
 
 interface Props {
     message: ChatMessage;
@@ -15,9 +17,49 @@ export const MessageBubble: React.FC<Props> = ({ message, isOwn }) => {
     const { sender, content, timing, metadata_info, status } = message;
     const isAi = sender.role === 'ai';
     const isTeacher = sender.role === 'teacher';
+    const highlightedMsgId = useChatStore((s) => s.highlightedMsgId);
+    const setHighlightedMsgId = useChatStore((s) => s.setHighlightedMsgId);
+
+    const [isHighlighted, setIsHighlighted] = useState(false);
+
+    // 溯源高亮：当 highlightedMsgId 匹配时闪烁
+    useEffect(() => {
+        if (highlightedMsgId === message.message_id) {
+            setIsHighlighted(true);
+            const timer = setTimeout(() => {
+                setIsHighlighted(false);
+                setHighlightedMsgId(null);
+            }, 2500);
+            return () => clearTimeout(timer);
+        }
+    }, [highlightedMsgId, message.message_id, setHighlightedMsgId]);
+
+    // 拖拽开始：传递消息数据到思维导图
+    const handleDragStart = useCallback(
+        (e: React.DragEvent) => {
+            const payload = JSON.stringify({
+                text: content,
+                role: sender.role,
+                senderName: sender.name,
+                message_id: message.message_id,
+            });
+            e.dataTransfer.setData('application/mindmap-message', payload);
+            e.dataTransfer.effectAllowed = 'copy';
+        },
+        [content, sender, message.message_id]
+    );
 
     return (
-        <div className={clsx('flex gap-2.5 mb-3', isOwn && 'flex-row-reverse')}>
+        <div
+            id={`msg-${message.message_id}`}
+            className={clsx(
+                'flex gap-2.5 mb-3 group/msg',
+                isOwn && 'flex-row-reverse',
+                isHighlighted && 'ring-2 ring-yellow-400 bg-yellow-50/60 rounded-2xl transition-all duration-500',
+            )}
+            draggable
+            onDragStart={handleDragStart}
+        >
             {/* 头像 */}
             <div
                 className={clsx(
@@ -49,7 +91,7 @@ export const MessageBubble: React.FC<Props> = ({ message, isOwn }) => {
                 {/* 消息体 */}
                 <div
                     className={clsx(
-                        'px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed',
+                        'relative px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed cursor-grab active:cursor-grabbing',
                         isOwn
                             ? 'bg-primary text-white rounded-br-md'
                             : isAi
@@ -57,6 +99,9 @@ export const MessageBubble: React.FC<Props> = ({ message, isOwn }) => {
                                 : 'bg-white text-gray-800 border border-gray-200 rounded-bl-md'
                     )}
                 >
+                    {/* 拖拽提示图标 */}
+                    <GripVertical className="absolute -left-5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-300 opacity-0 group-hover/msg:opacity-60 transition-opacity" />
+
                     {/* 支架标记 */}
                     {metadata_info?.is_scaffold_used && metadata_info?.scaffold_info && (
                         <span className="inline-block text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full mb-1.5">
@@ -78,7 +123,6 @@ export const MessageBubble: React.FC<Props> = ({ message, isOwn }) => {
                             minute: '2-digit',
                         })}
                     </p>
-                    {/* P0-1: 消息发送状态指示 */}
                     {isOwn && status === 'sending' && (
                         <Check className="w-3 h-3 text-gray-300" />
                     )}

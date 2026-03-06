@@ -1,6 +1,7 @@
 /**
  * 思维导图面板 — React Flow 交互式版本。
  * 支持：dagre 自动布局、拖拽、缩放、双击编辑、MiniMap、Controls。
+ * Sprint 2: Chat-Canvas Bridge（拖放建图、溯源、快捷工具栏）。
  */
 import React, {
     useCallback,
@@ -14,6 +15,8 @@ import React, {
 } from 'react';
 import {
     ReactFlow,
+    ReactFlowProvider,
+    useReactFlow,
     Controls,
     MiniMap,
     Background,
@@ -24,6 +27,7 @@ import {
     EdgeLabelRenderer,
     getSmoothStepPath,
     MarkerType,
+    NodeToolbar,
     type NodeProps,
     type EdgeProps,
     type Node,
@@ -32,8 +36,9 @@ import {
 import '@xyflow/react/dist/style.css';  // @ts-ignore css import
 import dagre from '@dagrejs/dagre';
 import { useMindMapStore, type FlowNode, type FlowEdge } from '../../store/useMindMapStore';
+import { useChatStore } from '../../store/useChatStore';
 import type { MindMapNodeData, MindMapNodeType } from '../../types';
-import { Loader2, Sparkles, Plus, Download, MessageCircle, ChevronDown, LayoutGrid } from 'lucide-react';
+import { Loader2, Sparkles, Plus, Download, MessageCircle, ChevronDown, LayoutGrid, Search } from 'lucide-react';
 import { DraftOverlay } from './DraftOverlay';
 
 // ── 颜色映射（柔和 pastel 填充 + 浅色边框） ──
@@ -136,17 +141,25 @@ function getLayoutedElements(
     return { nodes: layoutedNodes, edges };
 }
 
-// ── 自定义节点组件（Premium 卡片） ──
+// ── 自定义节点组件（Premium 卡片 + 溯源 + 快捷工具栏） ──
 
-function MindMapCustomNode({ data, id }: NodeProps<Node<MindMapNodeData>>) {
+const QUICK_CONNECT_ACTIONS = [
+    { label: '+ 推导', edgeLabel: '导致', nodeType: 'argument' as MindMapNodeType },
+    { label: '+ 细节', edgeLabel: '包含', nodeType: 'evidence' as MindMapNodeType },
+    { label: '+ 反驳', edgeLabel: '反驳', nodeType: 'question' as MindMapNodeType },
+];
+
+function MindMapCustomNode({ data, id, selected }: NodeProps<Node<MindMapNodeData>>) {
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(data.label);
     const inputRef = useRef<HTMLInputElement>(null);
-    const { updateNode, removeNode } = useMindMapStore();
+    const { updateNode, removeNode, addNode, addEdge: storeAddEdge } = useMindMapStore();
+    const setHighlightedMsgId = useChatStore((s) => s.setHighlightedMsgId);
 
     const colors = NODE_COLORS[data.nodeType] || NODE_COLORS.concept;
     const emoji = NODE_EMOJIS[data.nodeType] || '💡';
     const typeLabel = NODE_TYPE_LABELS[data.nodeType] || '概念';
+    const sourceMessageId = data.source_message_id as string | undefined;
 
     useEffect(() => {
         if (isEditing && inputRef.current) {
@@ -175,6 +188,29 @@ function MindMapCustomNode({ data, id }: NodeProps<Node<MindMapNodeData>>) {
         [handleSave]
     );
 
+    // 快捷连接：创建子节点 + 边
+    const handleQuickConnect = useCallback(
+        (action: typeof QUICK_CONNECT_ACTIONS[number]) => {
+            const newId = `n-${Date.now()}`;
+            const newNode = {
+                id: newId,
+                label: '新节点',
+                type: action.nodeType,
+                position: { x: 0, y: 0 }, // dagre 会重新布局
+            };
+            addNode(newNode);
+
+            const edgeId = `e-${Date.now()}`;
+            storeAddEdge({
+                id: edgeId,
+                source: id,
+                target: newId,
+                label: action.edgeLabel,
+            });
+        },
+        [id, addNode, storeAddEdge]
+    );
+
     return (
         <div
             onDoubleClick={handleDoubleClick}
@@ -192,6 +228,24 @@ function MindMapCustomNode({ data, id }: NodeProps<Node<MindMapNodeData>>) {
         >
             <Handle type="target" position={Position.Left} className="!w-2.5 !h-2.5 !bg-gray-300 !border-2 !border-white" />
 
+            {/* Sprint 2: 浮动快捷工具栏 */}
+            <NodeToolbar isVisible={selected} position={Position.Bottom} offset={8}>
+                <div className="flex gap-1 bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 px-1 py-1">
+                    {QUICK_CONNECT_ACTIONS.map((action) => (
+                        <button
+                            key={action.label}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                handleQuickConnect(action);
+                            }}
+                            className="px-2 py-1 text-[11px] font-medium text-gray-600 hover:bg-violet-50 hover:text-violet-700 rounded-md transition-colors whitespace-nowrap"
+                        >
+                            {action.label}
+                        </button>
+                    ))}
+                </div>
+            </NodeToolbar>
+
             <div
                 className="rounded-xl shadow-sm border cursor-grab active:cursor-grabbing transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 overflow-hidden"
                 style={{
@@ -199,7 +253,7 @@ function MindMapCustomNode({ data, id }: NodeProps<Node<MindMapNodeData>>) {
                     borderColor: colors.border,
                 }}
             >
-                {/* Header: emoji + type label */}
+                {/* Header: emoji + type label + traceability icon */}
                 <div
                     className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold border-b"
                     style={{
@@ -209,7 +263,20 @@ function MindMapCustomNode({ data, id }: NodeProps<Node<MindMapNodeData>>) {
                     }}
                 >
                     <span className="text-sm leading-none">{emoji}</span>
-                    <span>{typeLabel}</span>
+                    <span className="flex-1">{typeLabel}</span>
+                    {/* Sprint 2: 溯源图标 */}
+                    {sourceMessageId && (
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setHighlightedMsgId(sourceMessageId);
+                            }}
+                            className="p-0.5 rounded hover:bg-white/50 transition-colors"
+                            title="定位原始消息"
+                        >
+                            <Search className="w-3 h-3" />
+                        </button>
+                    )}
                 </div>
 
                 {/* Body: label text */}
@@ -388,6 +455,7 @@ interface MindMapFlowProps {
 }
 
 function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: MindMapFlowProps) {
+    const reactFlowInstance = useReactFlow();
     const {
         nodes,
         edges,
@@ -474,6 +542,59 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
         addNode(newNode);
         onEditSync('add_node', newNode);
     }, [addNode, onEditSync]);
+
+    // Sprint 2: 拖放建图（Chat → Canvas）
+    const handleDragOver = useCallback((e: React.DragEvent) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+    }, []);
+
+    const handleDrop = useCallback(
+        (e: React.DragEvent) => {
+            e.preventDefault();
+            const raw = e.dataTransfer.getData('application/mindmap-message');
+            if (!raw) return;
+
+            try {
+                const payload = JSON.parse(raw) as {
+                    text: string;
+                    role: string;
+                    senderName: string;
+                    message_id: string;
+                };
+
+                // 使用 reactFlowInstance 计算画布坐标
+                const position = reactFlowInstance.screenToFlowPosition({
+                    x: e.clientX,
+                    y: e.clientY,
+                });
+
+                // 截取前 60 字作为节点标签
+                const label = payload.text.length > 60
+                    ? payload.text.slice(0, 57) + '...'
+                    : payload.text;
+
+                const nodeType: MindMapNodeType =
+                    payload.role === 'ai' ? 'concept'
+                        : payload.role === 'teacher' ? 'evidence'
+                            : 'argument';
+
+                const id = `n-${Date.now()}`;
+                const newNode = {
+                    id,
+                    label,
+                    type: nodeType,
+                    position,
+                    source_message_id: payload.message_id,
+                };
+                addNode(newNode);
+                onEditSync('add_node', newNode);
+            } catch (err) {
+                console.warn('[MindMap] Drop parse error:', err);
+            }
+        },
+        [reactFlowInstance, addNode, onEditSync]
+    );
 
     // 导出 Markdown
     const handleExportMd = useCallback(() => {
@@ -563,8 +684,11 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
     }, [onAskSuggestion]);
 
     return (
-        <div className="relative w-full h-full bg-gray-50 rounded-xl border border-gray-200 overflow-hidden">
-            {/* 工具栏 */}
+        <div
+            className="relative w-full h-full bg-gray-50 rounded-xl border border-gray-200 overflow-hidden"
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+        >            {/* 工具栏 */}
             <div className="absolute top-3 right-3 z-10 flex gap-1.5">
                 <button
                     onClick={onGenerate}
@@ -700,10 +824,12 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
     );
 }
 
-// ── 导出 ──
+// ── 导出（包裹 ReactFlowProvider） ──
 
 export const MindMapPanel: React.FC<MindMapFlowProps> = (props) => (
     <MindMapErrorBoundary>
-        <MindMapFlowInner {...props} />
+        <ReactFlowProvider>
+            <MindMapFlowInner {...props} />
+        </ReactFlowProvider>
     </MindMapErrorBoundary>
 );
