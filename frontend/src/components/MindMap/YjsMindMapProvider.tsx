@@ -83,8 +83,8 @@ export function YjsMindMapProvider({ mapKey, children }: YjsMindMapProviderProps
                     source: (edgeData.source as string) ?? '',
                     target: (edgeData.target as string) ?? '',
                     label: (edgeData.label as string) ?? '',
-                    animated: true,
-                    style: { stroke: '#a78bfa', strokeWidth: 2 },
+                    animated: false,
+                    style: { stroke: '#a78bfa', strokeWidth: 1.5 },
                 };
             });
 

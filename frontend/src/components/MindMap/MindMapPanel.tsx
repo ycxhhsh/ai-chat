@@ -22,7 +22,8 @@ import {
     Position,
     BaseEdge,
     EdgeLabelRenderer,
-    getBezierPath,
+    getSmoothStepPath,
+    MarkerType,
     type NodeProps,
     type EdgeProps,
     type Node,
@@ -32,17 +33,25 @@ import '@xyflow/react/dist/style.css';  // @ts-ignore css import
 import dagre from '@dagrejs/dagre';
 import { useMindMapStore, type FlowNode, type FlowEdge } from '../../store/useMindMapStore';
 import type { MindMapNodeData, MindMapNodeType } from '../../types';
-import { Loader2, Sparkles, Plus, Download, MessageCircle, ChevronDown } from 'lucide-react';
+import { Loader2, Sparkles, Plus, Download, MessageCircle, ChevronDown, LayoutGrid } from 'lucide-react';
 import { DraftOverlay } from './DraftOverlay';
 
-// ── 颜色映射 ──
+// ── 颜色映射（柔和 pastel 填充 + 浅色边框） ──
 
-const NODE_COLORS: Record<MindMapNodeType, { bg: string; border: string; text: string }> = {
-    concept: { bg: '#eef2ff', border: '#6366f1', text: '#4338ca' },
-    argument: { bg: '#fffbeb', border: '#f59e0b', text: '#b45309' },
-    evidence: { bg: '#ecfdf5', border: '#10b981', text: '#047857' },
-    question: { bg: '#fef2f2', border: '#ef4444', text: '#b91c1c' },
-    suggestion: { bg: '#faf5ff', border: '#a78bfa', text: '#7c3aed' },
+const NODE_COLORS: Record<MindMapNodeType, { bg: string; border: string; text: string; headerBg: string }> = {
+    concept: { bg: '#eef2ff', border: '#c7d2fe', text: '#3730a3', headerBg: '#e0e7ff' },
+    argument: { bg: '#fffbeb', border: '#fde68a', text: '#92400e', headerBg: '#fef3c7' },
+    evidence: { bg: '#ecfdf5', border: '#a7f3d0', text: '#065f46', headerBg: '#d1fae5' },
+    question: { bg: '#fef2f2', border: '#fecaca', text: '#991b1b', headerBg: '#fee2e2' },
+    suggestion: { bg: '#faf5ff', border: '#ddd6fe', text: '#5b21b6', headerBg: '#ede9fe' },
+};
+
+const NODE_EMOJIS: Record<MindMapNodeType, string> = {
+    concept: '💡',
+    argument: '💬',
+    evidence: '📎',
+    question: '❓',
+    suggestion: '🔍',
 };
 
 const NODE_TYPE_LABELS: Record<MindMapNodeType, string> = {
@@ -50,7 +59,7 @@ const NODE_TYPE_LABELS: Record<MindMapNodeType, string> = {
     argument: '论点',
     evidence: '证据',
     question: '问题',
-    suggestion: '💡 探索',
+    suggestion: '探索',
 };
 
 // ── ErrorBoundary ──
@@ -89,15 +98,22 @@ class MindMapErrorBoundary extends Component<{ children: ReactNode }, EBState> {
 
 // ── dagre 自动布局 ──
 
-function getLayoutedElements(nodes: FlowNode[], edges: FlowEdge[]): { nodes: FlowNode[]; edges: FlowEdge[] } {
+const DAGRE_NODE_WIDTH = 200;
+const DAGRE_NODE_HEIGHT = 80;
+
+function getLayoutedElements(
+    nodes: FlowNode[],
+    edges: FlowEdge[],
+    direction: 'TB' | 'LR' = 'LR',
+): { nodes: FlowNode[]; edges: FlowEdge[] } {
     if (nodes.length === 0) return { nodes, edges };
 
     const g = new dagre.graphlib.Graph();
     g.setDefaultEdgeLabel(() => ({}));
-    g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
+    g.setGraph({ rankdir: direction, nodesep: 80, ranksep: 120 });
 
     nodes.forEach((node) => {
-        g.setNode(node.id, { width: 160, height: 50 });
+        g.setNode(node.id, { width: DAGRE_NODE_WIDTH, height: DAGRE_NODE_HEIGHT });
     });
 
     edges.forEach((edge) => {
@@ -110,14 +126,17 @@ function getLayoutedElements(nodes: FlowNode[], edges: FlowEdge[]): { nodes: Flo
         const pos = g.node(node.id);
         return {
             ...node,
-            position: { x: pos.x - 80, y: pos.y - 25 },
+            position: {
+                x: pos.x - DAGRE_NODE_WIDTH / 2,
+                y: pos.y - DAGRE_NODE_HEIGHT / 2,
+            },
         };
     });
 
     return { nodes: layoutedNodes, edges };
 }
 
-// ── 自定义节点组件 ──
+// ── 自定义节点组件（Premium 卡片） ──
 
 function MindMapCustomNode({ data, id }: NodeProps<Node<MindMapNodeData>>) {
     const [isEditing, setIsEditing] = useState(false);
@@ -126,6 +145,7 @@ function MindMapCustomNode({ data, id }: NodeProps<Node<MindMapNodeData>>) {
     const { updateNode, removeNode } = useMindMapStore();
 
     const colors = NODE_COLORS[data.nodeType] || NODE_COLORS.concept;
+    const emoji = NODE_EMOJIS[data.nodeType] || '💡';
     const typeLabel = NODE_TYPE_LABELS[data.nodeType] || '概念';
 
     useEffect(() => {
@@ -159,49 +179,60 @@ function MindMapCustomNode({ data, id }: NodeProps<Node<MindMapNodeData>>) {
         <div
             onDoubleClick={handleDoubleClick}
             onClick={() => {
-                // 点击 suggestion 节点触发发问
                 if (data.nodeType === 'suggestion') {
                     window.dispatchEvent(new CustomEvent('mindmap-ask-suggestion', { detail: data.label }));
                 }
             }}
             className="group relative"
             style={{
-                minWidth: 100,
-                maxWidth: 200,
+                minWidth: 140,
+                maxWidth: 240,
                 cursor: data.nodeType === 'suggestion' ? 'pointer' : undefined,
             }}
         >
-            <Handle type="target" position={Position.Top} className="!w-2 !h-2 !bg-gray-300" />
+            <Handle type="target" position={Position.Left} className="!w-2.5 !h-2.5 !bg-gray-300 !border-2 !border-white" />
 
             <div
-                className="px-4 py-2.5 rounded-xl text-sm font-medium shadow-md border-2 cursor-grab active:cursor-grabbing transition-shadow hover:shadow-lg"
+                className="rounded-xl shadow-sm border cursor-grab active:cursor-grabbing transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 overflow-hidden"
                 style={{
                     background: colors.bg,
                     borderColor: colors.border,
-                    color: colors.text,
                 }}
             >
-                {/* 类型标签 */}
-                <span
-                    className="absolute -top-2.5 left-3 px-1.5 py-0 text-[9px] font-bold rounded-sm text-white leading-[16px]"
-                    style={{ background: colors.border }}
+                {/* Header: emoji + type label */}
+                <div
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold border-b"
+                    style={{
+                        background: colors.headerBg,
+                        borderBottomColor: colors.border,
+                        color: colors.text,
+                    }}
                 >
-                    {typeLabel}
-                </span>
+                    <span className="text-sm leading-none">{emoji}</span>
+                    <span>{typeLabel}</span>
+                </div>
 
-                {isEditing ? (
-                    <input
-                        ref={inputRef}
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        onBlur={handleSave}
-                        onKeyDown={handleKeyDown}
-                        className="w-full bg-transparent outline-none text-center text-sm font-medium"
-                        style={{ color: colors.text }}
-                    />
-                ) : (
-                    <span className="block text-center break-words">{data.label}</span>
-                )}
+                {/* Body: label text */}
+                <div className="px-3 py-2">
+                    {isEditing ? (
+                        <input
+                            ref={inputRef}
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onBlur={handleSave}
+                            onKeyDown={handleKeyDown}
+                            className="w-full bg-transparent outline-none text-center text-sm font-medium"
+                            style={{ color: colors.text }}
+                        />
+                    ) : (
+                        <span
+                            className="block text-center break-words text-sm font-medium leading-snug"
+                            style={{ color: colors.text }}
+                        >
+                            {data.label}
+                        </span>
+                    )}
+                </div>
 
                 {/* 删除按钮 */}
                 <button
@@ -215,12 +246,12 @@ function MindMapCustomNode({ data, id }: NodeProps<Node<MindMapNodeData>>) {
                 </button>
             </div>
 
-            <Handle type="source" position={Position.Bottom} className="!w-2 !h-2 !bg-gray-300" />
+            <Handle type="source" position={Position.Right} className="!w-2.5 !h-2.5 !bg-gray-300 !border-2 !border-white" />
         </div>
     );
 }
 
-// ── 自定义边组件（支持标签显示 + 双击编辑 + 删除按钮） ──
+// ── 自定义边组件（SmoothStep + 白底标签 pill + 双击编辑 + 删除按钮） ──
 
 function MindMapCustomEdge({
     id,
@@ -239,13 +270,14 @@ function MindMapCustomEdge({
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(String(label || ''));
     const inputRef = useRef<HTMLInputElement>(null);
-    const [edgePath, labelX, labelY] = getBezierPath({
+    const [edgePath, labelX, labelY] = getSmoothStepPath({
         sourceX,
         sourceY,
         sourcePosition,
         targetX,
         targetY,
         targetPosition,
+        borderRadius: 12,
     });
 
     const isDraft = id?.startsWith('draft_') ?? false;
@@ -290,7 +322,7 @@ function MindMapCustomEdge({
                 style={{
                     ...style,
                     stroke: hovered ? '#7c3aed' : (style.stroke || '#a78bfa'),
-                    strokeWidth: hovered ? 3 : (Number(style.strokeWidth) || 2),
+                    strokeWidth: hovered ? 2.5 : (Number(style.strokeWidth) || 1.5),
                 }}
             />
             <EdgeLabelRenderer>
@@ -311,12 +343,12 @@ function MindMapCustomEdge({
                             onChange={(e) => setEditValue(e.target.value)}
                             onBlur={handleSave}
                             onKeyDown={handleKeyDown}
-                            className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-white border-2 border-violet-400 text-violet-700 outline-none shadow-md"
-                            style={{ width: `${Math.max(40, editValue.length * 10 + 20)}px` }}
+                            className="px-2 py-0.5 text-xs font-medium rounded-full bg-white border-2 border-violet-400 text-violet-700 outline-none shadow-md"
+                            style={{ width: `${Math.max(50, editValue.length * 10 + 24)}px` }}
                         />
                     ) : (
                         <span
-                            className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-white/90 border border-violet-200 text-violet-600 shadow-sm cursor-pointer hover:border-violet-400 hover:bg-white transition-colors"
+                            className="px-2 py-0.5 text-xs font-medium rounded-full bg-white border border-gray-200 text-gray-500 shadow-sm cursor-pointer hover:border-violet-300 hover:text-violet-600 transition-colors"
                             onDoubleClick={() => {
                                 if (!isDraft) {
                                     setEditValue(String(label || ''));
@@ -378,13 +410,13 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
     const mergedEdges = useMemo(() => [...edges, ...draftEdges], [edges, draftEdges]);
 
     const nodeTypes = useMemo(() => ({ mindMapNode: MindMapCustomNode }), []);
-    const edgeTypes = useMemo(() => ({ default: MindMapCustomEdge }), []);
+    const edgeTypes = useMemo(() => ({ default: MindMapCustomEdge, smoothstep: MindMapCustomEdge }), []);
     const prevNodeCountRef = useRef(mergedNodes.length);
 
     // dagre 自动布局：仅在节点数量变化时触发
     useEffect(() => {
         if (mergedNodes.length > 0 && mergedNodes.length !== prevNodeCountRef.current) {
-            const { nodes: layouted } = getLayoutedElements(mergedNodes, mergedEdges);
+            const { nodes: layouted } = getLayoutedElements(mergedNodes, mergedEdges, 'LR');
             // 通过 onNodesChange 应用位置变更（仅正式节点）
             const changes = layouted
                 .filter((n) => !n.id.startsWith('draft_'))
@@ -397,6 +429,20 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
         }
         prevNodeCountRef.current = mergedNodes.length;
     }, [mergedNodes.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // 手动一键排版
+    const handleAutoLayout = useCallback(() => {
+        const nonDraftNodes = mergedNodes.filter((n) => !n.id.startsWith('draft_'));
+        const nonDraftEdges = mergedEdges.filter((e) => !e.id.startsWith('draft_'));
+        if (nonDraftNodes.length === 0) return;
+        const { nodes: layouted } = getLayoutedElements(nonDraftNodes, nonDraftEdges, 'LR');
+        const changes = layouted.map((n) => ({
+            type: 'position' as const,
+            id: n.id,
+            position: n.position,
+        }));
+        onNodesChange(changes);
+    }, [mergedNodes, mergedEdges, onNodesChange]);
 
     // 拖拽连线创建新边
     const handleConnect = useCallback(
@@ -533,6 +579,14 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
                     {isGenerating ? '生成中...' : 'AI 提取'}
                 </button>
                 <button
+                    onClick={handleAutoLayout}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 transition-all shadow-sm"
+                    title="自动排版节点"
+                >
+                    <LayoutGrid className="w-3.5 h-3.5 text-amber-500" />
+                    🪄 一键排版
+                </button>
+                <button
                     onClick={handleAddNode}
                     className="flex items-center gap-1 px-2.5 py-1.5 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 transition-all shadow-sm"
                 >
@@ -614,8 +668,15 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
                     proOptions={{ hideAttribution: true }}
                     className="!bg-gray-50"
                     defaultEdgeOptions={{
-                        animated: true,
-                        style: { stroke: '#a78bfa', strokeWidth: 2 },
+                        type: 'smoothstep',
+                        animated: false,
+                        style: { stroke: '#a78bfa', strokeWidth: 1.5 },
+                        markerEnd: {
+                            type: MarkerType.ArrowClosed,
+                            width: 16,
+                            height: 16,
+                            color: '#a78bfa',
+                        },
                     }}
                 >
                     <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#e5e7eb" />

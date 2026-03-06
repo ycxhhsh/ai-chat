@@ -10,6 +10,7 @@ import {
     type EdgeChange,
     applyNodeChanges,
     applyEdgeChanges,
+    MarkerType,
 } from '@xyflow/react';
 import type { MindMapNode, MindMapEdge, MindMapData, MindMapNodeData } from '../types';
 
@@ -58,8 +59,10 @@ function toDraftFlowEdge(e: MindMapEdge): FlowEdge {
         source: `draft_${e.source}`,
         target: `draft_${e.target}`,
         label: e.label,
+        type: 'smoothstep',
         animated: true,
-        style: { stroke: '#a78bfa', strokeWidth: 2, opacity: 0.4, strokeDasharray: '5 5' },
+        style: { stroke: '#a78bfa', strokeWidth: 1.5, opacity: 0.4, strokeDasharray: '5 5' },
+        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: '#a78bfa' },
     };
 }
 
@@ -70,8 +73,10 @@ function toFlowEdge(e: MindMapEdge): FlowEdge {
         source: e.source,
         target: e.target,
         label: e.label,
-        animated: true,
-        style: { stroke: '#a78bfa', strokeWidth: 2 },
+        type: 'smoothstep',
+        animated: false,
+        style: { stroke: '#a78bfa', strokeWidth: 1.5 },
+        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: '#a78bfa' },
     };
 }
 
