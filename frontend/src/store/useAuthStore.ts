@@ -1,9 +1,9 @@
 /**
  * 认证 Store — 登录、注册、登出、token 管理。
- * 持久化到 localStorage。
+ * Sprint 4: 持久化到 sessionStorage（防止共享电脑幽灵登录）。
  */
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import type { User } from '../types';
 import { api } from '../api';
 
@@ -35,7 +35,7 @@ export const useAuthStore = create<AuthState>()(
                 useAiConversationStore.getState().clearAll();
 
                 const data = await api.auth.login(email, password);
-                localStorage.setItem('cothink-token', data.access_token);
+                sessionStorage.setItem('cothink-token', data.access_token);
                 set({
                     user: data.user,
                     token: data.access_token,
@@ -45,7 +45,7 @@ export const useAuthStore = create<AuthState>()(
 
             register: async (email, password, name, role) => {
                 const data = await api.auth.register(email, password, name, role);
-                localStorage.setItem('cothink-token', data.access_token);
+                sessionStorage.setItem('cothink-token', data.access_token);
                 set({
                     user: data.user,
                     token: data.access_token,
@@ -54,7 +54,7 @@ export const useAuthStore = create<AuthState>()(
             },
 
             logout: () => {
-                localStorage.removeItem('cothink-token');
+                sessionStorage.removeItem('cothink-token');
                 // 清空所有用户相关状态
                 import('./useChatStore').then(m => m.useChatStore.getState().clearMessages());
                 import('./useGroupStore').then(m => m.useGroupStore.getState().clearGroups());
@@ -67,12 +67,13 @@ export const useAuthStore = create<AuthState>()(
             },
 
             setAuth: (user, token) => {
-                localStorage.setItem('cothink-token', token);
+                sessionStorage.setItem('cothink-token', token);
                 set({ user, token, isAuthenticated: true });
             },
         }),
         {
             name: 'cothink-auth',
+            storage: createJSONStorage(() => sessionStorage),
             partialize: (state) => ({
                 user: state.user,
                 token: state.token,

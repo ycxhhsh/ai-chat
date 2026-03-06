@@ -1,11 +1,12 @@
 /**
  * 学生端侧边栏 — 小组列表、AI 对话列表、频道切换、在线状态。
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useGroupStore } from '../../store/useGroupStore';
 import { useChatStore } from '../../store/useChatStore';
 import { useAiConversationStore } from '../../store/useAiConversationStore';
+import { ChangePasswordModal } from '../Auth/ChangePasswordModal';
 import {
     Users,
     MessageSquare,
@@ -18,6 +19,8 @@ import {
     MessageCirclePlus,
     Copy,
     Check,
+    KeyRound,
+    ChevronDown,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -58,6 +61,9 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
     const [loading, setLoading] = useState(false);
     const [createdInviteCode, setCreatedInviteCode] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
+    const [showUserMenu, setShowUserMenu] = useState(false);
+    const [showPasswordModal, setShowPasswordModal] = useState(false);
+    const userMenuRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         fetchGroups().catch(() => { });
@@ -141,9 +147,12 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
 
     return (
         <div className="w-64 h-full bg-white border-r border-gray-200 flex flex-col">
-            {/* 用户信息 */}
-            <div className="p-4 border-b border-gray-100">
-                <div className="flex items-center gap-3">
+            {/* 用户信息 + 下拉菜单 */}
+            <div className="p-4 border-b border-gray-100 relative" ref={userMenuRef}>
+                <button
+                    onClick={() => setShowUserMenu(!showUserMenu)}
+                    className="flex items-center gap-3 w-full text-left hover:bg-gray-50 rounded-lg p-1 -m-1 transition-colors"
+                >
                     <div className="w-9 h-9 rounded-full bg-primary text-white flex items-center justify-center text-sm font-medium">
                         {user?.name?.charAt(0) || '?'}
                     </div>
@@ -151,14 +160,28 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
                         <p className="text-sm font-medium text-gray-900 truncate">{user?.name}</p>
                         <p className="text-[11px] text-gray-400">{user?.role === 'teacher' ? '教师' : '学生'}</p>
                     </div>
-                    <button
-                        onClick={logout}
-                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                        title="退出登录"
-                    >
-                        <LogOut className="w-4 h-4" />
-                    </button>
-                </div>
+                    <ChevronDown className={clsx('w-4 h-4 text-gray-400 transition-transform', showUserMenu && 'rotate-180')} />
+                </button>
+
+                {/* 下拉菜单 */}
+                {showUserMenu && (
+                    <div className="absolute left-3 right-3 top-full mt-1 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50">
+                        <button
+                            onClick={() => { setShowPasswordModal(true); setShowUserMenu(false); }}
+                            className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                        >
+                            <KeyRound className="w-4 h-4 text-gray-400" />
+                            修改密码
+                        </button>
+                        <button
+                            onClick={logout}
+                            className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                        >
+                            <LogOut className="w-4 h-4" />
+                            退出登录
+                        </button>
+                    </div>
+                )}
             </div>
 
             {/* 频道切换 */}
@@ -430,6 +453,11 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
                         知道了
                     </button>
                 </Modal>
+            )}
+
+            {/* 修改密码弹窗 */}
+            {showPasswordModal && (
+                <ChangePasswordModal onClose={() => setShowPasswordModal(false)} />
             )}
         </div>
     );

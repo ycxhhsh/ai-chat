@@ -11,6 +11,7 @@ from app.core.dependencies import get_current_user, get_db
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.user import User
 from app.schemas.auth import (
+    ChangePasswordRequest,
     LoginRequest,
     RegisterRequest,
     TokenResponse,
@@ -103,3 +104,25 @@ async def get_me(
     user: Annotated[User, Depends(get_current_user)],
 ):
     return _user_response(user)
+
+
+@router.put("/password")
+async def change_password(
+    body: ChangePasswordRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    if not verify_password(body.old_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="旧密码不正确",
+        )
+    if len(body.new_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="新密码至少 6 位",
+        )
+    user.password_hash = hash_password(body.new_password)
+    db.add(user)
+    await db.commit()
+    return {"message": "密码修改成功"}

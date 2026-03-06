@@ -12,7 +12,7 @@ const http = axios.create({
 
 // 请求拦截器：自动附带 token
 http.interceptors.request.use((config) => {
-    const token = localStorage.getItem('cothink-token');
+    const token = sessionStorage.getItem('cothink-token');
     if (token) {
         config.headers.Authorization = `Bearer ${token}`;
     }
@@ -25,8 +25,8 @@ http.interceptors.response.use(
     (error) => {
         if (error.response?.status === 401) {
             console.warn('[API] 401 Unauthorized — clearing auth and redirecting');
-            localStorage.removeItem('cothink-token');
-            localStorage.removeItem('cothink-auth');
+            sessionStorage.removeItem('cothink-token');
+            sessionStorage.removeItem('cothink-auth');
             if (!window.location.pathname.includes('/login')) {
                 window.location.href = '/login';
             }
@@ -48,6 +48,10 @@ export const api = {
         },
         login: async (email: string, password: string) => {
             const res = await http.post('/auth/login', { email, password });
+            return res.data;
+        },
+        changePassword: async (oldPassword: string, newPassword: string) => {
+            const res = await http.put('/auth/password', { old_password: oldPassword, new_password: newPassword });
             return res.data;
         },
         me: async () => {

@@ -121,9 +121,9 @@ async def _generate_mindmap(
                     f"{json.dumps({'nodes': existing_map.nodes, 'edges': existing_map.edges}, ensure_ascii=False)}"
                 )
 
-        # 构建对话文本
+        # 构建对话文本（注入 message_id 以便 AI 节点溯源）
         conversation_text = "\n".join(
-            f"[{m.sender.get('name', '未知')}]: {m.content}"
+            f"[MsgID:{m.message_id}] [{m.sender.get('name', '未知')}]: {m.content}"
             for m in reversed(messages)
         )
 

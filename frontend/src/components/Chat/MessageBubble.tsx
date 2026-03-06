@@ -7,6 +7,8 @@ import type { ChatMessage } from '../../types';
 import { useChatStore } from '../../store/useChatStore';
 import clsx from 'clsx';
 import { Check, CheckCheck, AlertCircle, GripVertical } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface Props {
     message: ChatMessage;
@@ -109,7 +111,15 @@ export const MessageBubble: React.FC<Props> = ({ message, isOwn }) => {
                         </span>
                     )}
 
-                    <p className="whitespace-pre-wrap">{content}</p>
+                    {isAi ? (
+                        <div className="prose prose-sm prose-blue max-w-none leading-relaxed [&>p]:mb-1.5 [&>p:last-child]:mb-0 [&>ul]:mb-1.5 [&>ol]:mb-1.5 [&_li]:mb-0.5 [&_code]:bg-violet-100 [&_code]:px-1 [&_code]:rounded [&_code]:text-xs">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                {content}
+                            </ReactMarkdown>
+                        </div>
+                    ) : (
+                        <p className="whitespace-pre-wrap">{content}</p>
+                    )}
                 </div>
 
                 {/* 时间 + 消息状态 */}

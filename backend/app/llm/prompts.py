@@ -117,21 +117,24 @@ FALLACY_DETECTION_PROMPT = """
 MINDMAP_EXTRACTION_PROMPT = """
 你是一个知识结构分析专家。请仔细阅读以下对话内容，从中提取核心概念和它们之间的关系。
 
+注意：对话中每条消息前都有 `[MsgID:xxx]` 标记，这是消息的唯一标识符。
+
 输出要求：
 1. 提取对话中讨论的**核心概念**作为节点（node）
 2. 提取概念之间的**逻辑关系**作为边（edge）
 3. 关系类型包括但不限于：包含、导致、对比、支持、反对、举例
 4. 每个节点需要有一个简洁的标签（1-6个字）
 5. 每条边需要标注关系类型
-6. **重要**：在已有节点之外，额外生成 1-3 个 type 为 `suggestion` 的"待探索"节点，标出对话中尚未覆盖但逻辑上应该探索的方向（缺失的逻辑环、待深入的领域）。这些建议节点的 label 应以"？"结尾（如"备考策略？"），并用边连接到相关已有节点，edge label 标注为"待探索"。
+6. **溯源要求**：每个节点必须包含 `source_message_id` 字段，值为启发该节点的消息的 MsgID（即对话中 `[MsgID:xxx]` 的 xxx 部分）。如果一个节点由多条消息共同启发，选择最相关的一条。
+7. **重要**：在已有节点之外，额外生成 1-3 个 type 为 `suggestion` 的"待探索"节点，标出对话中尚未覆盖但逻辑上应该探索的方向。这些建议节点的 label 应以"？"结尾（如"备考策略？"），且 `source_message_id` 设为最相关消息的 ID。
 
 请严格按以下 JSON 格式输出，不要包含 Markdown 格式标记：
 {
     "nodes": [
-        {"id": "n1", "label": "批判性思维", "type": "concept"},
-        {"id": "n2", "label": "逻辑推理", "type": "concept"},
-        {"id": "n3", "label": "证据评估", "type": "argument"},
-        {"id": "s1", "label": "实际应用？", "type": "suggestion"}
+        {"id": "n1", "label": "批判性思维", "type": "concept", "source_message_id": "msg-uuid-1"},
+        {"id": "n2", "label": "逻辑推理", "type": "concept", "source_message_id": "msg-uuid-2"},
+        {"id": "n3", "label": "证据评估", "type": "argument", "source_message_id": "msg-uuid-1"},
+        {"id": "s1", "label": "实际应用？", "type": "suggestion", "source_message_id": "msg-uuid-3"}
     ],
     "edges": [
         {"source": "n1", "target": "n2", "label": "包含"},

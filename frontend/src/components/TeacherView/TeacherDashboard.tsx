@@ -45,7 +45,7 @@ type ChatTypeFilter = 'all' | 'group' | 'personal';
 
 const CHART_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
-// ── 统计卡片 ──
+// ── 统计卡片 (Bento Box) ──
 function StatCard({
     icon: Icon,
     label,
@@ -58,16 +58,16 @@ function StatCard({
     color: string;
 }) {
     return (
-        <div className="bg-white rounded-xl border border-gray-200 p-5 flex items-center gap-4">
+        <div className="bg-white rounded-3xl border border-gray-100 p-5 flex items-center gap-4 shadow-sm hover:shadow-md transition-shadow">
             <div
-                className="w-12 h-12 rounded-xl flex items-center justify-center"
-                style={{ background: color + '15' }}
+                className="w-12 h-12 rounded-2xl flex items-center justify-center"
+                style={{ background: color + '12' }}
             >
                 <Icon className="w-6 h-6" style={{ color }} />
             </div>
             <div>
-                <p className="text-2xl font-bold text-gray-900">{value}</p>
-                <p className="text-xs text-gray-400 mt-0.5">{label}</p>
+                <p className="text-3xl font-extrabold text-gray-900 tracking-tight">{value}</p>
+                <p className="text-xs text-gray-400 mt-0.5 font-medium">{label}</p>
             </div>
         </div>
     );
@@ -444,12 +444,12 @@ export const TeacherDashboard: React.FC = () => {
                                 <RefreshCw className="w-3.5 h-3.5" /> 刷新
                             </button>
                         </div>
-                        <div className="grid grid-cols-3 gap-4 mb-6">
+                        <div className="grid grid-cols-3 gap-6 mb-6">
                             <StatCard icon={Users} label="学生总数" value={stats.student_count ?? '-'} color="#6366f1" />
                             <StatCard icon={Users} label="小组数" value={stats.group_count ?? '-'} color="#f59e0b" />
                             <StatCard icon={MessageSquare} label="消息总数" value={stats.message_count ?? '-'} color="#10b981" />
                         </div>
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-2 gap-6">
                             <StatCard icon={MessageSquare} label="AI 回复数" value={stats.ai_message_count ?? '-'} color="#8b5cf6" />
                             <StatCard icon={FileText} label="作业数" value={stats.assignment_count ?? '-'} color="#ef4444" />
                         </div>
