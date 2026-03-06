@@ -15,7 +15,7 @@ import { ChatInterface } from '../Chat/ChatInterface';
 import { MindMapPanel } from '../MindMap/MindMapPanel';
 import { AssignmentPanel } from './AssignmentPanel';
 import { generateUUID } from '../../utils/uuid';
-import { PanelRight, PanelRightClose } from 'lucide-react';
+import { PanelRight, PanelRightClose, Menu } from 'lucide-react';
 import type { ChatMessage } from '../../types';
 
 type ChannelType = 'group' | 'ai' | 'assignment';
@@ -23,6 +23,7 @@ type ChannelType = 'group' | 'ai' | 'assignment';
 export const StudentView: React.FC = () => {
     const [activeChannel, setActiveChannel] = useState<ChannelType>('group');
     const [showMindMap, setShowMindMap] = useState(true);
+    const [sidebarOpen, setSidebarOpen] = useState(false);
     const { setInputMessage } = useScaffoldStore();
 
     const { user } = useAuthStore();
@@ -190,23 +191,46 @@ export const StudentView: React.FC = () => {
 
     return (
         <div className="h-screen flex bg-gray-50">
-            {/* 侧边栏 */}
-            <Sidebar
-                activeChannel={activeChannel}
-                onChannelChange={setActiveChannel}
-            />
+            {/* 移动端侧边栏遮罩 */}
+            {sidebarOpen && (
+                <div
+                    className="fixed inset-0 bg-black/40 z-40 md:hidden"
+                    onClick={() => setSidebarOpen(false)}
+                />
+            )}
+
+            {/* 侧边栏：桌面端始终可见，移动端抽屉触发 */}
+            <div className={`
+                fixed inset-y-0 left-0 z-50 transform transition-transform duration-200 ease-in-out
+                md:relative md:translate-x-0
+                ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+            `}>
+                <Sidebar
+                    activeChannel={activeChannel}
+                    onChannelChange={(ch) => { setActiveChannel(ch); setSidebarOpen(false); }}
+                />
+            </div>
 
             {/* 主内容区 */}
             <div className="flex-1 flex flex-col min-w-0">
                 {/* 顶部工具栏 */}
                 <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-200">
-                    <h1 className="text-sm font-semibold text-gray-900">
-                        {channelTitles[activeChannel]}
-                    </h1>
+                    <div className="flex items-center gap-2">
+                        {/* 汉堡菜单（仅移动端） */}
+                        <button
+                            onClick={() => setSidebarOpen(true)}
+                            className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-lg md:hidden"
+                        >
+                            <Menu className="w-5 h-5" />
+                        </button>
+                        <h1 className="text-sm font-semibold text-gray-900">
+                            {channelTitles[activeChannel]}
+                        </h1>
+                    </div>
                     {activeChannel !== 'assignment' && (
                         <button
                             onClick={() => setShowMindMap(!showMindMap)}
-                            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-500 hover:text-primary hover:bg-primary-light rounded-lg transition-colors"
+                            className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-500 hover:text-primary hover:bg-primary-light rounded-lg transition-colors"
                         >
                             {showMindMap ? (
                                 <><PanelRightClose className="w-4 h-4" /> 隐藏导图</>
@@ -218,9 +242,9 @@ export const StudentView: React.FC = () => {
                 </div>
 
                 {/* 聊天 + 思维导图 */}
-                <div className="flex-1 flex overflow-hidden p-3 gap-3">
-                    {/* 聊天区 */}
-                    <div className={showMindMap && activeChannel !== 'assignment' ? 'w-1/2' : 'w-full'}>
+                <div className="flex-1 flex overflow-hidden p-2 md:p-3 gap-2 md:gap-3">
+                    {/* 聊天区：移动端全宽 */}
+                    <div className={showMindMap && activeChannel !== 'assignment' ? 'w-full md:w-1/2' : 'w-full'}>
                         {activeChannel === 'assignment' ? (
                             <AssignmentPanel />
                         ) : (
@@ -234,9 +258,9 @@ export const StudentView: React.FC = () => {
                         )}
                     </div>
 
-                    {/* 思维导图区 */}
+                    {/* 思维导图区：移动端隐藏，仅桌面 md+ 显示 */}
                     {showMindMap && activeChannel !== 'assignment' && (
-                        <div className="w-1/2">
+                        <div className="hidden md:block md:w-1/2">
                             <MindMapPanel
                                 onGenerate={handleGenerateMindMap}
                                 onEditSync={handleMindMapEditSync}

@@ -444,12 +444,12 @@ export const TeacherDashboard: React.FC = () => {
                                 <RefreshCw className="w-3.5 h-3.5" /> 刷新
                             </button>
                         </div>
-                        <div className="grid grid-cols-3 gap-6 mb-6">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 mb-4 md:mb-6">
                             <StatCard icon={Users} label="学生总数" value={stats.student_count ?? '-'} color="#6366f1" />
                             <StatCard icon={Users} label="小组数" value={stats.group_count ?? '-'} color="#f59e0b" />
                             <StatCard icon={MessageSquare} label="消息总数" value={stats.message_count ?? '-'} color="#10b981" />
                         </div>
-                        <div className="grid grid-cols-2 gap-6">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
                             <StatCard icon={MessageSquare} label="AI 回复数" value={stats.ai_message_count ?? '-'} color="#8b5cf6" />
                             <StatCard icon={FileText} label="作业数" value={stats.assignment_count ?? '-'} color="#ef4444" />
                         </div>
