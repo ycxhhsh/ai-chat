@@ -1,10 +1,9 @@
 /**
- * 登录/注册页面。
- * 从原项目迁移，改用拆分后的 useAuthStore。
+ * 登录/注册页面 — Sprint 3 现代 50/50 split-screen 设计。
  */
 import React, { useState } from 'react';
 import { useAuthStore } from '../../store/useAuthStore';
-import { Mail, Lock, User } from 'lucide-react';
+import { Mail, Lock, User, Brain, Users, Sparkles, BookOpen } from 'lucide-react';
 import clsx from 'clsx';
 
 export const LoginPage: React.FC = () => {
@@ -58,21 +57,73 @@ export const LoginPage: React.FC = () => {
     };
 
     return (
-        <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center p-4">
-            <div className="w-full max-w-[400px]">
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 h-screen">
+            {/* ── 左侧品牌区域 ── */}
+            <div className="hidden md:flex flex-col items-center justify-center bg-gradient-to-br from-blue-600 via-indigo-700 to-indigo-800 text-white p-12 relative overflow-hidden">
+                {/* 背景装饰圆 */}
+                <div className="absolute -top-32 -left-32 w-96 h-96 bg-white/5 rounded-full blur-3xl" />
+                <div className="absolute -bottom-40 -right-40 w-[500px] h-[500px] bg-indigo-500/20 rounded-full blur-3xl" />
+                <div className="absolute top-1/4 right-10 w-40 h-40 bg-blue-400/10 rounded-full blur-2xl" />
+
+                <div className="relative z-10 max-w-md text-center">
                     {/* Logo */}
-                    <div className="flex justify-center mb-6">
-                        <div className="w-12 h-12 bg-primary rounded-xl flex items-center justify-center text-white font-bold text-lg">
-                            Co
+                    <div className="w-20 h-20 bg-white/15 backdrop-blur-sm rounded-2xl flex items-center justify-center mx-auto mb-8 border border-white/20 shadow-lg">
+                        <Brain className="w-10 h-10 text-white" />
+                    </div>
+
+                    <h1 className="text-4xl font-bold tracking-tight mb-3">
+                        CoThink AI
+                    </h1>
+                    <p className="text-xl font-light text-blue-100 mb-8">
+                        激发思考的协作外脑
+                    </p>
+
+                    <div className="w-16 h-px bg-white/30 mx-auto mb-8" />
+
+                    {/* 特性列表 */}
+                    <div className="space-y-4 text-left">
+                        <div className="flex items-center gap-3 text-blue-100">
+                            <div className="w-9 h-9 bg-white/10 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <Sparkles className="w-4.5 h-4.5" />
+                            </div>
+                            <span className="text-sm font-medium">AI 苏格拉底导师 · 启发式引导</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-blue-100">
+                            <div className="w-9 h-9 bg-white/10 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <Users className="w-4.5 h-4.5" />
+                            </div>
+                            <span className="text-sm font-medium">小组协作空间 · 实时思维碰撞</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-blue-100">
+                            <div className="w-9 h-9 bg-white/10 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <BookOpen className="w-4.5 h-4.5" />
+                            </div>
+                            <span className="text-sm font-medium">CRDT 思维导图 · 可视化知识建构</span>
+                        </div>
+                    </div>
+                </div>
+
+                {/* 底部文字 */}
+                <p className="absolute bottom-6 text-xs text-blue-200/60">
+                    © 2026 CoThink AI · 让学习更高效
+                </p>
+            </div>
+
+            {/* ── 右侧表单区域 ── */}
+            <div className="flex items-center justify-center bg-white p-6 sm:p-12">
+                <div className="w-full max-w-[400px]">
+                    {/* 移动端 Logo */}
+                    <div className="flex justify-center mb-6 md:hidden">
+                        <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-xl flex items-center justify-center shadow-lg">
+                            <Brain className="w-6 h-6 text-white" />
                         </div>
                     </div>
 
-                    <h1 className="text-xl font-medium text-gray-900 text-center mb-1">
-                        {isLogin ? '登录 CoThink' : '创建账号'}
+                    <h1 className="text-2xl font-bold text-gray-900 mb-1">
+                        {isLogin ? '欢迎回来' : '创建账号'}
                     </h1>
-                    <p className="text-sm text-gray-500 text-center mb-6">
-                        {isLogin ? '继续使用协作学习平台' : '开始您的学习之旅'}
+                    <p className="text-sm text-gray-500 mb-8">
+                        {isLogin ? '登录以继续使用 CoThink AI' : '开始您的协作学习之旅'}
                     </p>
 
                     {/* 快捷登录 */}
@@ -81,16 +132,16 @@ export const LoginPage: React.FC = () => {
                             <button
                                 type="button"
                                 onClick={() => fillTestAccount('student')}
-                                className="flex-1 py-2 px-3 text-xs font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition-colors"
+                                className="flex-1 py-2.5 px-3 text-xs font-medium text-gray-600 bg-gray-50 hover:bg-blue-50 hover:text-blue-600 rounded-xl border border-transparent hover:border-blue-200 transition-all"
                             >
-                                学生测试账号
+                                🎓 学生测试账号
                             </button>
                             <button
                                 type="button"
                                 onClick={() => fillTestAccount('teacher')}
-                                className="flex-1 py-2 px-3 text-xs font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition-colors"
+                                className="flex-1 py-2.5 px-3 text-xs font-medium text-gray-600 bg-gray-50 hover:bg-blue-50 hover:text-blue-600 rounded-xl border border-transparent hover:border-blue-200 transition-all"
                             >
-                                教师测试账号
+                                👩‍🏫 教师测试账号
                             </button>
                         </div>
                     )}
@@ -103,7 +154,7 @@ export const LoginPage: React.FC = () => {
                                     姓名
                                 </label>
                                 <div className="relative">
-                                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                    <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                                     <input
                                         type="text"
                                         placeholder="您的姓名"
@@ -111,7 +162,7 @@ export const LoginPage: React.FC = () => {
                                         onChange={(e) =>
                                             setFormData({ ...formData, name: e.target.value })
                                         }
-                                        className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-sm transition-all"
+                                        className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-transparent rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white focus:ring-1 focus:ring-blue-500 text-sm transition-all"
                                         required={!isLogin}
                                     />
                                 </div>
@@ -124,7 +175,7 @@ export const LoginPage: React.FC = () => {
                                 邮箱
                             </label>
                             <div className="relative">
-                                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                                 <input
                                     type="email"
                                     placeholder="example@email.com"
@@ -132,7 +183,7 @@ export const LoginPage: React.FC = () => {
                                     onChange={(e) =>
                                         setFormData({ ...formData, email: e.target.value })
                                     }
-                                    className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-sm transition-all"
+                                    className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-transparent rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white focus:ring-1 focus:ring-blue-500 text-sm transition-all"
                                     required
                                 />
                             </div>
@@ -144,7 +195,7 @@ export const LoginPage: React.FC = () => {
                                 密码
                             </label>
                             <div className="relative">
-                                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                                 <input
                                     type="password"
                                     placeholder="至少 6 位字符"
@@ -152,7 +203,7 @@ export const LoginPage: React.FC = () => {
                                     onChange={(e) =>
                                         setFormData({ ...formData, password: e.target.value })
                                     }
-                                    className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-sm transition-all"
+                                    className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-transparent rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white focus:ring-1 focus:ring-blue-500 text-sm transition-all"
                                     required
                                     minLength={6}
                                 />
@@ -172,13 +223,13 @@ export const LoginPage: React.FC = () => {
                                             setFormData({ ...formData, role: 'student' })
                                         }
                                         className={clsx(
-                                            'py-2.5 rounded-lg border text-sm font-medium transition-all',
+                                            'py-3 rounded-xl border text-sm font-medium transition-all',
                                             formData.role === 'student'
-                                                ? 'bg-primary-light border-primary text-primary'
-                                                : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'
+                                                ? 'bg-blue-50 border-blue-300 text-blue-700 shadow-sm'
+                                                : 'bg-gray-50 border-transparent text-gray-600 hover:bg-gray-100'
                                         )}
                                     >
-                                        学生
+                                        🎓 学生
                                     </button>
                                     <button
                                         type="button"
@@ -186,13 +237,13 @@ export const LoginPage: React.FC = () => {
                                             setFormData({ ...formData, role: 'teacher' })
                                         }
                                         className={clsx(
-                                            'py-2.5 rounded-lg border text-sm font-medium transition-all',
+                                            'py-3 rounded-xl border text-sm font-medium transition-all',
                                             formData.role === 'teacher'
-                                                ? 'bg-primary-light border-primary text-primary'
-                                                : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'
+                                                ? 'bg-blue-50 border-blue-300 text-blue-700 shadow-sm'
+                                                : 'bg-gray-50 border-transparent text-gray-600 hover:bg-gray-100'
                                         )}
                                     >
-                                        教师
+                                        👩‍🏫 教师
                                     </button>
                                 </div>
                             </div>
@@ -200,7 +251,7 @@ export const LoginPage: React.FC = () => {
 
                         {/* 错误提示 */}
                         {error && (
-                            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+                            <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm">
                                 {error}
                             </div>
                         )}
@@ -209,14 +260,14 @@ export const LoginPage: React.FC = () => {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full py-2.5 bg-primary text-white font-medium rounded-lg hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                            className="w-full py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                         >
-                            {loading ? '处理中...' : isLogin ? '登录' : '创建账号'}
+                            {loading ? '处理中...' : isLogin ? '登 录' : '创建账号'}
                         </button>
                     </form>
 
                     {/* 切换登录/注册 */}
-                    <div className="mt-6 text-center">
+                    <div className="mt-8 text-center">
                         <span className="text-sm text-gray-500">
                             {isLogin ? '还没有账号？' : '已有账号？'}
                         </span>
@@ -225,16 +276,12 @@ export const LoginPage: React.FC = () => {
                                 setIsLogin(!isLogin);
                                 setError(null);
                             }}
-                            className="ml-1 text-sm font-medium text-primary hover:underline"
+                            className="ml-1 text-sm font-semibold text-blue-600 hover:text-blue-700 hover:underline transition-colors"
                         >
                             {isLogin ? '立即注册' : '去登录'}
                         </button>
                     </div>
                 </div>
-
-                <p className="mt-6 text-center text-xs text-gray-400">
-                    CoThink AI 协作学习平台 · 让学习更高效
-                </p>
             </div>
         </div>
     );

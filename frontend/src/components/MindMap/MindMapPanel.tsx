@@ -479,24 +479,9 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
 
     const nodeTypes = useMemo(() => ({ mindMapNode: MindMapCustomNode }), []);
     const edgeTypes = useMemo(() => ({ default: MindMapCustomEdge, smoothstep: MindMapCustomEdge }), []);
-    const prevNodeCountRef = useRef(mergedNodes.length);
 
-    // dagre 自动布局：仅在节点数量变化时触发
-    useEffect(() => {
-        if (mergedNodes.length > 0 && mergedNodes.length !== prevNodeCountRef.current) {
-            const { nodes: layouted } = getLayoutedElements(mergedNodes, mergedEdges, 'LR');
-            // 通过 onNodesChange 应用位置变更（仅正式节点）
-            const changes = layouted
-                .filter((n) => !n.id.startsWith('draft_'))
-                .map((n) => ({
-                    type: 'position' as const,
-                    id: n.id,
-                    position: n.position,
-                }));
-            if (changes.length > 0) onNodesChange(changes);
-        }
-        prevNodeCountRef.current = mergedNodes.length;
-    }, [mergedNodes.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    // dagre 自动布局已移除 — 仅在用户点击"一键排版"时触发
+    // 这样拖放建图和快捷连接不会导致画布跳动
 
     // 手动一键排版
     const handleAutoLayout = useCallback(() => {

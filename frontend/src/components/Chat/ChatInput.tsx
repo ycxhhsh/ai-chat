@@ -1,7 +1,7 @@
 /**
- * 聊天输入框组件。
+ * 聊天输入框组件 — Sprint 3 现代浮动设计。
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Send } from 'lucide-react';
 import { useScaffoldStore } from '../../store/useScaffoldStore';
 import { generateUUID } from '../../utils/uuid';
@@ -15,6 +15,7 @@ interface Props {
 export const ChatInput: React.FC<Props> = ({ onSend, disabled, isAiChannel }) => {
     const { inputMessage, setInputMessage, activeScaffoldId, setActiveScaffold, scaffolds } = useScaffoldStore();
     const [localInput, setLocalInput] = useState('');
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
 
     // 监听思维导图"用作上下文"事件
     useEffect(() => {
@@ -30,6 +31,18 @@ export const ChatInput: React.FC<Props> = ({ onSend, disabled, isAiChannel }) =>
 
     // 同步支架填充的内容
     const currentValue = inputMessage || localInput;
+
+    // 自动调整 textarea 高度
+    const adjustHeight = useCallback(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.style.height = 'auto';
+        el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+    }, []);
+
+    useEffect(() => {
+        adjustHeight();
+    }, [currentValue, adjustHeight]);
 
     const handleSend = () => {
         const content = currentValue.trim();
@@ -55,6 +68,11 @@ export const ChatInput: React.FC<Props> = ({ onSend, disabled, isAiChannel }) =>
         setLocalInput('');
         setInputMessage('');
         setActiveScaffold(null);
+
+        // 重置高度
+        if (textareaRef.current) {
+            textareaRef.current.style.height = 'auto';
+        }
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -65,26 +83,29 @@ export const ChatInput: React.FC<Props> = ({ onSend, disabled, isAiChannel }) =>
     };
 
     return (
-        <div className="flex items-end gap-2 p-3 border-t border-gray-200 bg-white">
-            <textarea
-                value={currentValue}
-                onChange={(e) => {
-                    setLocalInput(e.target.value);
-                    if (inputMessage) setInputMessage('');
-                }}
-                onKeyDown={handleKeyDown}
-                placeholder={isAiChannel ? '直接输入消息开始对话...' : '输入消息... (@AI 触发AI回复)'}
-                disabled={disabled}
-                rows={1}
-                className="flex-1 resize-none px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary focus:bg-white transition-all disabled:opacity-50"
-            />
-            <button
-                onClick={handleSend}
-                disabled={disabled || !currentValue.trim()}
-                className="p-2.5 bg-primary text-white rounded-xl hover:bg-primary-hover disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            >
-                <Send className="w-4 h-4" />
-            </button>
+        <div className="p-2">
+            <div className="flex items-end gap-2 rounded-2xl bg-gray-50 border border-gray-200 focus-within:border-blue-400 focus-within:bg-white focus-within:shadow-sm transition-all px-3 py-2">
+                <textarea
+                    ref={textareaRef}
+                    value={currentValue}
+                    onChange={(e) => {
+                        setLocalInput(e.target.value);
+                        if (inputMessage) setInputMessage('');
+                    }}
+                    onKeyDown={handleKeyDown}
+                    placeholder={isAiChannel ? '输入消息开始对话...' : '输入消息... (@AI 触发AI回复)'}
+                    disabled={disabled}
+                    rows={1}
+                    className="flex-1 resize-none bg-transparent border-none outline-none text-sm text-gray-900 placeholder-gray-400 disabled:opacity-50 leading-relaxed max-h-40"
+                />
+                <button
+                    onClick={handleSend}
+                    disabled={disabled || !currentValue.trim()}
+                    className="p-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow flex-shrink-0"
+                >
+                    <Send className="w-4 h-4" />
+                </button>
+            </div>
         </div>
     );
 };

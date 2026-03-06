@@ -1,5 +1,6 @@
 /**
- * 支架快捷按钮栏。
+ * 支架快捷按钮栏 — Sprint 3 水平滚动 pill 标签。
+ * 位于聊天输入框上方。
  */
 import React, { useState } from 'react';
 import { useScaffoldStore } from '../../store/useScaffoldStore';
@@ -24,12 +25,12 @@ export const ScaffoldBar: React.FC = () => {
 
     return (
         <>
-            <div className="flex gap-1.5 px-3 py-2 overflow-x-auto border-b border-gray-100 bg-gray-50/50">
+            <div className="flex gap-1.5 px-3 py-2 overflow-x-auto scrollbar-hide">
                 {activeScaffolds.map((s) => (
                     <button
                         key={s.scaffold_id}
                         onClick={() => handleClick(s)}
-                        className="flex-shrink-0 px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-full hover:bg-primary-light hover:text-primary hover:border-primary transition-all"
+                        className="flex-shrink-0 px-3 py-1 text-xs font-medium text-gray-600 bg-white rounded-full border border-gray-200 shadow-sm hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all cursor-pointer"
                     >
                         {s.display_name}
                     </button>
