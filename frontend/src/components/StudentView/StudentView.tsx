@@ -64,7 +64,12 @@ export const StudentView: React.FC = () => {
 
     // 切换对话时加载历史消息
     useEffect(() => {
-        if (!currentConversationId || activeChannel !== 'ai') return;
+        if (activeChannel !== 'ai') return;
+        // 没有选中对话时，清空消息区（显示空白等待用户选择）
+        if (!currentConversationId) {
+            setAiMessages([]);
+            return;
+        }
         let cancelled = false;
         (async () => {
             try {
