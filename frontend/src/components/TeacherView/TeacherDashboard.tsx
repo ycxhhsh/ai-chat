@@ -146,6 +146,11 @@ export const TeacherDashboard: React.FC = () => {
     const [newCourseName, setNewCourseName] = useState('');
     const [newCourseDesc, setNewCourseDesc] = useState('');
 
+    // 单独添加学生
+    const [showAddStudent, setShowAddStudent] = useState(false);
+    const [addStudentName, setAddStudentName] = useState('');
+    const [addStudentId, setAddStudentId] = useState('');
+
     // 加载统计
     const loadStats = useCallback(async () => {
         try {
@@ -309,7 +314,24 @@ export const TeacherDashboard: React.FC = () => {
         input.click();
     };
 
-    // P1-5: CSV 导出
+    // 单独添加学生
+    const handleAddStudent = async () => {
+        if (!addStudentName.trim() || !addStudentId.trim()) {
+            alert('请填写姓名和学号');
+            return;
+        }
+        try {
+            const res = await apiTyped.roster.addOne(addStudentName, addStudentId);
+            alert(res.message);
+            setShowAddStudent(false);
+            setAddStudentName('');
+            setAddStudentId('');
+            loadStudents();
+            loadStats();
+        } catch (err: any) {
+            alert(err?.response?.data?.detail || '添加失败');
+        }
+    };
     const handleExportCsv = async () => {
         try {
             const blob = await apiTyped.teacher.exportCsv();
@@ -549,6 +571,12 @@ export const TeacherDashboard: React.FC = () => {
                                 >
                                     <Upload className="w-3.5 h-3.5" /> 导入名单
                                 </button>
+                                <button
+                                    onClick={() => setShowAddStudent(true)}
+                                    className="flex items-center gap-1.5 px-3 py-2 text-xs text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
+                                >
+                                    <Users className="w-3.5 h-3.5" /> + 添加学生
+                                </button>
                             </div>
                             <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
                                 <table className="w-full">
@@ -587,6 +615,33 @@ export const TeacherDashboard: React.FC = () => {
                                     </div>
                                 )}
                             </div>
+
+                            {/* 添加学生弹窗 */}
+                            {showAddStudent && (
+                                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+                                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <h3 className="text-sm font-semibold text-gray-900">添加学生</h3>
+                                            <button onClick={() => setShowAddStudent(false)} className="text-gray-400 hover:text-gray-600">✕</button>
+                                        </div>
+                                        <div className="space-y-3">
+                                            <div>
+                                                <label className="block text-xs font-medium text-gray-700 mb-1">姓名</label>
+                                                <input type="text" value={addStudentName} onChange={(e) => setAddStudentName(e.target.value)} placeholder="张三" className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-medium text-gray-700 mb-1">学号</label>
+                                                <input type="text" value={addStudentId} onChange={(e) => setAddStudentId(e.target.value)} placeholder="20210001" className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+                                            </div>
+                                            <p className="text-[10px] text-gray-400">账号将自动生成为 学号@stu.edu，默认密码 123456</p>
+                                            <div className="flex justify-end gap-2 pt-2">
+                                                <button onClick={() => setShowAddStudent(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">取消</button>
+                                                <button onClick={handleAddStudent} className="px-4 py-2 text-sm text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors">确认添加</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -808,401 +863,478 @@ export const TeacherDashboard: React.FC = () => {
                         </div>
                     )}
 
-                {/* ────── 支架管理 ────── */}
-                {activeTab === 'scaffolds' && (
-                    <div>
-                        <div className="flex items-center justify-between mb-6">
-                            <h1 className="text-xl font-bold text-gray-900">支架管理</h1>
-                            <button onClick={loadScaffolds} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
-                                <RefreshCw className="w-3.5 h-3.5" /> 刷新
-                            </button>
-                        </div>
-                        <div className="space-y-3">
-                            {scaffolds.map((s) => (
-                                <div key={s.scaffold_id as string} className="bg-white rounded-xl border border-gray-200 p-4">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <h3 className="text-sm font-medium text-gray-900">{s.display_name as string}</h3>
-                                        <div className="flex items-center gap-3">
-                                            <button onClick={() => setEditingScaffold(s)} className="text-xs text-indigo-600 hover:text-indigo-800">编辑</button>
-                                            <button
-                                                onClick={() => toggleScaffold(s.scaffold_id as string, s.is_active as boolean)}
-                                                className={clsx('text-[10px] px-2 py-0.5 rounded-full font-medium cursor-pointer transition-colors', s.is_active ? 'bg-green-50 text-green-600 hover:bg-green-100' : 'bg-gray-100 text-gray-400 hover:bg-gray-200')}
-                                            >
-                                                {s.is_active ? '启用中 (点击停用)' : '已停用 (点击启用)'}
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <p className="text-xs text-gray-400 font-mono bg-gray-50 p-2 rounded">{s.prompt_template as string}</p>
-                                </div>
-                            ))}
-                            {scaffolds.length === 0 && <div className="text-center py-8 text-gray-300 text-sm">暂无支架</div>}
-                        </div>
-
-                        {/* 编辑弹窗 */}
-                        {editingScaffold && (
-                            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-                                <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-5">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <h3 className="text-sm font-semibold text-gray-900">编辑支架</h3>
-                                        <button onClick={() => setEditingScaffold(null)} className="text-gray-400 hover:text-gray-600">✕</button>
-                                    </div>
-                                    <div className="space-y-4">
-                                        <div>
-                                            <label className="block text-xs font-medium text-gray-700 mb-1">支架名称</label>
-                                            <input type="text" value={editingScaffold.display_name as string} onChange={(e) => setEditingScaffold({ ...editingScaffold, display_name: e.target.value })} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-medium text-gray-700 mb-1">提示词模板</label>
-                                            <textarea value={editingScaffold.prompt_template as string} onChange={(e) => setEditingScaffold({ ...editingScaffold, prompt_template: e.target.value })} rows={5} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none" />
-                                        </div>
-                                        <div className="flex justify-end gap-2 pt-2">
-                                            <button onClick={() => setEditingScaffold(null)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">取消</button>
-                                            <button onClick={saveScaffold} className="px-4 py-2 text-sm text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors">保存</button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {/* ────── P1-5 / P2-9: 学习分析 ────── */}
-                {activeTab === 'analytics' && (
-                    <div>
-                        <div className="flex items-center justify-between mb-6">
-                            <h1 className="text-xl font-bold text-gray-900">学习分析</h1>
-                            <div className="flex gap-2">
-                                <button onClick={handleExportCsv} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">
-                                    <Download className="w-3.5 h-3.5" /> 导出 CSV
-                                </button>
-                                <button onClick={loadAnalytics} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
+                    {/* ────── 支架管理 ────── */}
+                    {activeTab === 'scaffolds' && (
+                        <div>
+                            <div className="flex items-center justify-between mb-6">
+                                <h1 className="text-xl font-bold text-gray-900">支架管理</h1>
+                                <button onClick={loadScaffolds} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
                                     <RefreshCw className="w-3.5 h-3.5" /> 刷新
                                 </button>
                             </div>
-                        </div>
-
-                        {!analyticsData ? (
-                            <div className="text-center py-12 text-gray-400">加载中...</div>
-                        ) : (
-                            <div className="space-y-6">
-                                {/* 参与度曲线 */}
-                                {analyticsData.participation_trend && analyticsData.participation_trend.length > 0 && (
-                                    <div className="bg-white rounded-xl border border-gray-200 p-5">
-                                        <h3 className="text-sm font-semibold text-gray-900 mb-4">参与度趋势</h3>
-                                        <ResponsiveContainer width="100%" height={250}>
-                                            <LineChart data={analyticsData.participation_trend}>
-                                                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                                <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                                                <YAxis tick={{ fontSize: 11 }} />
-                                                <Tooltip />
-                                                <Line type="monotone" dataKey="count" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} name="消息数" />
-                                            </LineChart>
-                                        </ResponsiveContainer>
-                                    </div>
-                                )}
-
-                                {/* AI 介入率 */}
-                                {analyticsData.ai_intervention_rate && analyticsData.ai_intervention_rate.length > 0 && (
-                                    <div className="bg-white rounded-xl border border-gray-200 p-5">
-                                        <h3 className="text-sm font-semibold text-gray-900 mb-4">AI 介入率（每位学生）</h3>
-                                        <ResponsiveContainer width="100%" height={250}>
-                                            <BarChart data={analyticsData.ai_intervention_rate}>
-                                                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                                <XAxis dataKey="student_name" tick={{ fontSize: 10 }} />
-                                                <YAxis tick={{ fontSize: 11 }} />
-                                                <Tooltip />
-                                                <Bar dataKey="ai_ratio" fill="#8b5cf6" radius={[4, 4, 0, 0]} name="AI 消息占比" />
-                                            </BarChart>
-                                        </ResponsiveContainer>
-                                    </div>
-                                )}
-
-                                {/* 支架使用饼图 */}
-                                {analyticsData.scaffold_usage && analyticsData.scaffold_usage.length > 0 && (
-                                    <div className="bg-white rounded-xl border border-gray-200 p-5">
-                                        <h3 className="text-sm font-semibold text-gray-900 mb-4">支架使用分布</h3>
-                                        <ResponsiveContainer width="100%" height={250}>
-                                            <PieChart>
-                                                <Pie
-                                                    data={analyticsData.scaffold_usage}
-                                                    cx="50%"
-                                                    cy="50%"
-                                                    outerRadius={80}
-                                                    dataKey="count"
-                                                    nameKey="scaffold_name"
-                                                    label={(props: any) =>
-                                                        `${props.scaffold_name || ''} ${((props.percent || 0) * 100).toFixed(0)}%`
-                                                    }
+                            <div className="space-y-3">
+                                {scaffolds.map((s) => (
+                                    <div key={s.scaffold_id as string} className="bg-white rounded-xl border border-gray-200 p-4">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <h3 className="text-sm font-medium text-gray-900">{s.display_name as string}</h3>
+                                            <div className="flex items-center gap-3">
+                                                <button onClick={() => setEditingScaffold(s)} className="text-xs text-indigo-600 hover:text-indigo-800">编辑</button>
+                                                <button
+                                                    onClick={() => toggleScaffold(s.scaffold_id as string, s.is_active as boolean)}
+                                                    className={clsx('text-[10px] px-2 py-0.5 rounded-full font-medium cursor-pointer transition-colors', s.is_active ? 'bg-green-50 text-green-600 hover:bg-green-100' : 'bg-gray-100 text-gray-400 hover:bg-gray-200')}
                                                 >
-                                                    {analyticsData.scaffold_usage.map((_: unknown, idx: number) => (
-                                                        <Cell key={idx} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
-                                                    ))}
-                                                </Pie>
-                                                <Tooltip />
-                                                <Legend />
-                                            </PieChart>
-                                        </ResponsiveContainer>
+                                                    {s.is_active ? '启用中 (点击停用)' : '已停用 (点击启用)'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <p className="text-xs text-gray-400 font-mono bg-gray-50 p-2 rounded">{s.prompt_template as string}</p>
                                     </div>
-                                )}
+                                ))}
+                                {scaffolds.length === 0 && <div className="text-center py-8 text-gray-300 text-sm">暂无支架</div>}
+                            </div>
 
-                                {/* 活跃会话 */}
-                                {analyticsData.active_sessions && analyticsData.active_sessions.length > 0 && (
-                                    <div className="bg-white rounded-xl border border-gray-200 p-5">
-                                        <h3 className="text-sm font-semibold text-gray-900 mb-4">活跃会话</h3>
-                                        <div className="space-y-2">
-                                            {analyticsData.active_sessions.map((s: Record<string, unknown>, i: number) => (
-                                                <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg text-sm">
-                                                    <span className="text-gray-700 font-mono text-xs">{(s.session_id as string)?.slice(0, 12)}...</span>
-                                                    <span className="text-gray-500">{s.message_count as number} 条消息</span>
-                                                    <span className="text-gray-400 text-xs">{s.last_activity as string}</span>
-                                                </div>
-                                            ))}
+                            {/* 编辑弹窗 */}
+                            {editingScaffold && (
+                                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+                                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-5">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <h3 className="text-sm font-semibold text-gray-900">编辑支架</h3>
+                                            <button onClick={() => setEditingScaffold(null)} className="text-gray-400 hover:text-gray-600">✕</button>
+                                        </div>
+                                        <div className="space-y-4">
+                                            <div>
+                                                <label className="block text-xs font-medium text-gray-700 mb-1">支架名称</label>
+                                                <input type="text" value={editingScaffold.display_name as string} onChange={(e) => setEditingScaffold({ ...editingScaffold, display_name: e.target.value })} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-medium text-gray-700 mb-1">提示词模板</label>
+                                                <textarea value={editingScaffold.prompt_template as string} onChange={(e) => setEditingScaffold({ ...editingScaffold, prompt_template: e.target.value })} rows={5} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none" />
+                                            </div>
+                                            <div className="flex justify-end gap-2 pt-2">
+                                                <button onClick={() => setEditingScaffold(null)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">取消</button>
+                                                <button onClick={saveScaffold} className="px-4 py-2 text-sm text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors">保存</button>
+                                            </div>
                                         </div>
                                     </div>
-                                )}
+                                </div>
+                            )}
+                        </div>
+                    )}
 
-                                {/* 非空但无任何子数据 */}
-                                {!analyticsData.participation_trend?.length && !analyticsData.ai_intervention_rate?.length && !analyticsData.scaffold_usage?.length && (
-                                    <div className="text-center py-12 text-gray-400 text-sm">暂无足够数据生成分析图表</div>
-                                )}
+                    {/* ────── P1-5 / P2-9: 学习分析 ────── */}
+                    {activeTab === 'analytics' && (
+                        <div>
+                            <div className="flex items-center justify-between mb-6">
+                                <h1 className="text-xl font-bold text-gray-900">学习分析</h1>
+                                <div className="flex gap-2">
+                                    <button onClick={handleExportCsv} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">
+                                        <Download className="w-3.5 h-3.5" /> 导出 CSV
+                                    </button>
+                                    <button onClick={loadAnalytics} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
+                                        <RefreshCw className="w-3.5 h-3.5" /> 刷新
+                                    </button>
+                                </div>
                             </div>
-                        )}
-                    </div>
-                )}
 
-                {/* ────── P1-6: 知识库 ────── */}
-                {activeTab === 'knowledge' && (
-                    <div>
-                        <div className="flex items-center justify-between mb-6">
-                            <h1 className="text-xl font-bold text-gray-900">知识库管理</h1>
-                            <div className="flex gap-2">
-                                <button onClick={handleUploadDoc} className="flex items-center gap-1.5 px-3 py-2 text-xs text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">
-                                    <Upload className="w-3.5 h-3.5" /> 上传文档
-                                </button>
-                                <button onClick={loadDocuments} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
+                            {!analyticsData ? (
+                                <div className="text-center py-12 text-gray-400">加载中...</div>
+                            ) : (
+                                <div className="space-y-6">
+                                    {/* 参与度曲线 */}
+                                    {analyticsData.participation_trend && analyticsData.participation_trend.length > 0 && (
+                                        <div className="bg-white rounded-xl border border-gray-200 p-5">
+                                            <h3 className="text-sm font-semibold text-gray-900 mb-4">参与度趋势</h3>
+                                            <ResponsiveContainer width="100%" height={250}>
+                                                <LineChart data={analyticsData.participation_trend}>
+                                                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                                    <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                                                    <YAxis tick={{ fontSize: 11 }} />
+                                                    <Tooltip />
+                                                    <Line type="monotone" dataKey="count" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} name="消息数" />
+                                                </LineChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    )}
+
+                                    {/* AI 介入率 */}
+                                    {analyticsData.ai_intervention_rate && analyticsData.ai_intervention_rate.length > 0 && (
+                                        <div className="bg-white rounded-xl border border-gray-200 p-5">
+                                            <h3 className="text-sm font-semibold text-gray-900 mb-4">AI 介入率（每位学生）</h3>
+                                            <ResponsiveContainer width="100%" height={250}>
+                                                <BarChart data={analyticsData.ai_intervention_rate}>
+                                                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                                    <XAxis dataKey="student_name" tick={{ fontSize: 10 }} />
+                                                    <YAxis tick={{ fontSize: 11 }} />
+                                                    <Tooltip />
+                                                    <Bar dataKey="ai_ratio" fill="#8b5cf6" radius={[4, 4, 0, 0]} name="AI 消息占比" />
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    )}
+
+                                    {/* 支架使用饼图 */}
+                                    {analyticsData.scaffold_usage && analyticsData.scaffold_usage.length > 0 && (
+                                        <div className="bg-white rounded-xl border border-gray-200 p-5">
+                                            <h3 className="text-sm font-semibold text-gray-900 mb-4">支架使用分布</h3>
+                                            <ResponsiveContainer width="100%" height={250}>
+                                                <PieChart>
+                                                    <Pie
+                                                        data={analyticsData.scaffold_usage}
+                                                        cx="50%"
+                                                        cy="50%"
+                                                        outerRadius={80}
+                                                        dataKey="count"
+                                                        nameKey="scaffold_name"
+                                                        label={(props: any) =>
+                                                            `${props.scaffold_name || ''} ${((props.percent || 0) * 100).toFixed(0)}%`
+                                                        }
+                                                    >
+                                                        {analyticsData.scaffold_usage.map((_: unknown, idx: number) => (
+                                                            <Cell key={idx} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
+                                                        ))}
+                                                    </Pie>
+                                                    <Tooltip />
+                                                    <Legend />
+                                                </PieChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    )}
+
+                                    {/* 活跃会话 */}
+                                    {analyticsData.active_sessions && analyticsData.active_sessions.length > 0 && (
+                                        <div className="bg-white rounded-xl border border-gray-200 p-5">
+                                            <h3 className="text-sm font-semibold text-gray-900 mb-4">活跃会话</h3>
+                                            <div className="space-y-2">
+                                                {analyticsData.active_sessions.map((s: Record<string, unknown>, i: number) => (
+                                                    <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg text-sm">
+                                                        <span className="text-gray-700 font-mono text-xs">{(s.session_id as string)?.slice(0, 12)}...</span>
+                                                        <span className="text-gray-500">{s.message_count as number} 条消息</span>
+                                                        <span className="text-gray-400 text-xs">{s.last_activity as string}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                    {/* 参与度热力图 */}
+                                    {analyticsData.participation_heatmap && analyticsData.participation_heatmap.length > 0 && (() => {
+                                        const hm = analyticsData.participation_heatmap as { student_name: string; date: string; count: number }[];
+                                        const students = [...new Set(hm.map(d => d.student_name))];
+                                        const dates = [...new Set(hm.map(d => d.date))].sort();
+                                        const maxCount = Math.max(...hm.map(d => d.count), 1);
+                                        const lookup = new Map(hm.map(d => [`${d.student_name}-${d.date}`, d.count]));
+                                        return (
+                                            <div className="bg-white rounded-xl border border-gray-200 p-4">
+                                                <h3 className="text-sm font-semibold text-gray-900 mb-3">📊 参与度热力图</h3>
+                                                <div className="overflow-x-auto">
+                                                    <div className="inline-grid gap-[2px]" style={{ gridTemplateColumns: `100px repeat(${dates.length}, 28px)` }}>
+                                                        <div className="text-[9px] text-gray-400" />
+                                                        {dates.map(d => <div key={d} className="text-[8px] text-gray-400 text-center rotate-[-45deg] origin-bottom-left h-6">{d.slice(5)}</div>)}
+                                                        {students.map(s => (
+                                                            <>
+                                                                <div key={`n-${s}`} className="text-[10px] text-gray-600 truncate pr-1 flex items-center">{s}</div>
+                                                                {dates.map(d => {
+                                                                    const v = lookup.get(`${s}-${d}`) || 0;
+                                                                    const intensity = v / maxCount;
+                                                                    return (
+                                                                        <div
+                                                                            key={`${s}-${d}`}
+                                                                            className="w-6 h-6 rounded-sm"
+                                                                            style={{ backgroundColor: v === 0 ? '#f3f4f6' : `rgba(99, 102, 241, ${0.15 + intensity * 0.85})` }}
+                                                                            title={`${s} ${d}: ${v} 条`}
+                                                                        />
+                                                                    );
+                                                                })}
+                                                            </>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-2 mt-3">
+                                                    <span className="text-[9px] text-gray-400">少</span>
+                                                    {[0.1, 0.3, 0.5, 0.7, 1].map(v => (
+                                                        <div key={v} className="w-3 h-3 rounded-sm" style={{ backgroundColor: `rgba(99, 102, 241, ${0.15 + v * 0.85})` }} />
+                                                    ))}
+                                                    <span className="text-[9px] text-gray-400">多</span>
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+
+                                    {/* 词云 */}
+                                    {analyticsData.word_cloud && analyticsData.word_cloud.length > 0 && (() => {
+                                        const words = analyticsData.word_cloud as { word: string; count: number }[];
+                                        const top50 = words.slice(0, 50);
+                                        const maxC = Math.max(...top50.map(w => w.count), 1);
+                                        const colors = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#14b8a6'];
+                                        return (
+                                            <div className="bg-white rounded-xl border border-gray-200 p-4">
+                                                <h3 className="text-sm font-semibold text-gray-900 mb-3">☁️ 高频词云</h3>
+                                                <div className="flex flex-wrap gap-2 justify-center py-4">
+                                                    {top50.map((w, i) => {
+                                                        const ratio = w.count / maxC;
+                                                        const size = 12 + ratio * 24;
+                                                        return (
+                                                            <span
+                                                                key={w.word}
+                                                                className="inline-block transition-transform hover:scale-110 cursor-default"
+                                                                style={{
+                                                                    fontSize: `${size}px`,
+                                                                    fontWeight: ratio > 0.5 ? 700 : 400,
+                                                                    color: colors[i % colors.length],
+                                                                    opacity: 0.6 + ratio * 0.4,
+                                                                }}
+                                                                title={`${w.word}: ${w.count} 次`}
+                                                            >
+                                                                {w.word}
+                                                            </span>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+
+                                    {/* 非空但无任何子数据 */}
+                                    {!analyticsData.participation_trend?.length && !analyticsData.ai_intervention_rate?.length && !analyticsData.scaffold_usage?.length && !analyticsData.participation_heatmap?.length && !analyticsData.word_cloud?.length && (
+                                        <div className="text-center py-12 text-gray-400 text-sm">暂无足够数据生成分析图表</div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ────── P1-6: 知识库 ────── */}
+                    {activeTab === 'knowledge' && (
+                        <div>
+                            <div className="flex items-center justify-between mb-6">
+                                <h1 className="text-xl font-bold text-gray-900">知识库管理</h1>
+                                <div className="flex gap-2">
+                                    <button onClick={handleUploadDoc} className="flex items-center gap-1.5 px-3 py-2 text-xs text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">
+                                        <Upload className="w-3.5 h-3.5" /> 上传文档
+                                    </button>
+                                    <button onClick={loadDocuments} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
+                                        <RefreshCw className="w-3.5 h-3.5" /> 刷新
+                                    </button>
+                                </div>
+                            </div>
+                            <p className="text-xs text-gray-400 mb-4">支持 PDF、Docx、TXT 格式，最大 20MB。上传后将自动切片并建立向量索引，AI 回复时会检索相关上下文。</p>
+                            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                                <table className="w-full">
+                                    <thead>
+                                        <tr className="bg-gray-50 text-xs text-gray-500 uppercase">
+                                            <th className="px-4 py-3 text-left font-medium">文件名</th>
+                                            <th className="px-4 py-3 text-right font-medium">切片数</th>
+                                            <th className="px-4 py-3 text-right font-medium">上传时间</th>
+                                            <th className="px-4 py-3 text-right font-medium">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {documents.map((d) => (
+                                            <tr key={d.source_file as string} className="border-t border-gray-100 hover:bg-gray-50 transition-colors">
+                                                <td className="px-4 py-3 text-sm font-medium text-gray-900">{d.source_file as string}</td>
+                                                <td className="px-4 py-3 text-sm text-right text-gray-600">{d.chunk_count as number}</td>
+                                                <td className="px-4 py-3 text-sm text-right text-gray-400">
+                                                    {d.uploaded_at ? new Date(d.uploaded_at as string).toLocaleDateString('zh-CN') : '-'}
+                                                </td>
+                                                <td className="px-4 py-3 text-right">
+                                                    <button onClick={() => handleDeleteDoc(d.source_file as string)} className="text-red-400 hover:text-red-600">
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                        {documents.length === 0 && (
+                                            <tr><td colSpan={4} className="px-4 py-8 text-center text-gray-300 text-sm">暂无文档</td></tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ────── P1-8: 作业批阅 ────── */}
+                    {activeTab === 'assignments' && (
+                        <div>
+                            <div className="flex items-center justify-between mb-6">
+                                <h1 className="text-xl font-bold text-gray-900">作业批阅</h1>
+                                <button onClick={loadAssignments} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
                                     <RefreshCw className="w-3.5 h-3.5" /> 刷新
                                 </button>
                             </div>
-                        </div>
-                        <p className="text-xs text-gray-400 mb-4">支持 PDF、Docx、TXT 格式，最大 20MB。上传后将自动切片并建立向量索引，AI 回复时会检索相关上下文。</p>
-                        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                            <table className="w-full">
-                                <thead>
-                                    <tr className="bg-gray-50 text-xs text-gray-500 uppercase">
-                                        <th className="px-4 py-3 text-left font-medium">文件名</th>
-                                        <th className="px-4 py-3 text-right font-medium">切片数</th>
-                                        <th className="px-4 py-3 text-right font-medium">上传时间</th>
-                                        <th className="px-4 py-3 text-right font-medium">操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {documents.map((d) => (
-                                        <tr key={d.source_file as string} className="border-t border-gray-100 hover:bg-gray-50 transition-colors">
-                                            <td className="px-4 py-3 text-sm font-medium text-gray-900">{d.source_file as string}</td>
-                                            <td className="px-4 py-3 text-sm text-right text-gray-600">{d.chunk_count as number}</td>
-                                            <td className="px-4 py-3 text-sm text-right text-gray-400">
-                                                {d.uploaded_at ? new Date(d.uploaded_at as string).toLocaleDateString('zh-CN') : '-'}
-                                            </td>
-                                            <td className="px-4 py-3 text-right">
-                                                <button onClick={() => handleDeleteDoc(d.source_file as string)} className="text-red-400 hover:text-red-600">
-                                                    <Trash2 className="w-4 h-4" />
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    {documents.length === 0 && (
-                                        <tr><td colSpan={4} className="px-4 py-8 text-center text-gray-300 text-sm">暂无文档</td></tr>
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                )}
-
-                {/* ────── P1-8: 作业批阅 ────── */}
-                {activeTab === 'assignments' && (
-                    <div>
-                        <div className="flex items-center justify-between mb-6">
-                            <h1 className="text-xl font-bold text-gray-900">作业批阅</h1>
-                            <button onClick={loadAssignments} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
-                                <RefreshCw className="w-3.5 h-3.5" /> 刷新
-                            </button>
-                        </div>
-                        <div className="space-y-3">
-                            {assignments.map((a) => (
-                                <div key={a.assignment_id} className="bg-white rounded-xl border border-gray-200 p-4">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-sm font-medium text-gray-900">{a.student_name || '未知'}</span>
-                                            <span className="text-xs text-gray-400">{a.student_email}</span>
-                                            <span className={clsx(
-                                                'text-[10px] px-2 py-0.5 rounded-full font-medium',
-                                                a.status === 'reviewed' ? 'bg-green-50 text-green-600' :
-                                                    a.status === 'ai_graded' ? 'bg-violet-50 text-violet-600' :
-                                                        'bg-yellow-50 text-yellow-600'
-                                            )}>
-                                                {a.status === 'reviewed' ? '已复核' : a.status === 'ai_graded' ? 'AI 已评' : '待批阅'}
-                                            </span>
-                                        </div>
-                                        <span className="text-xs text-gray-400">{new Date(a.created_at).toLocaleDateString('zh-CN')}</span>
-                                    </div>
-                                    <p className="text-sm text-gray-700 line-clamp-3 mb-3">{a.content || '(无文本内容)'}</p>
-
-                                    {/* 附件链接 */}
-                                    {a.file_url && (
-                                        <div className="mb-3 bg-gray-50 rounded-lg p-2.5">
-                                            <div className="flex items-center gap-1.5 mb-1.5">
-                                                <Paperclip className="w-3 h-3 text-gray-500" />
-                                                <span className="text-xs font-medium text-gray-600">附件</span>
+                            <div className="space-y-3">
+                                {assignments.map((a) => (
+                                    <div key={a.assignment_id} className="bg-white rounded-xl border border-gray-200 p-4">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-sm font-medium text-gray-900">{a.student_name || '未知'}</span>
+                                                <span className="text-xs text-gray-400">{a.student_email}</span>
+                                                <span className={clsx(
+                                                    'text-[10px] px-2 py-0.5 rounded-full font-medium',
+                                                    a.status === 'reviewed' ? 'bg-green-50 text-green-600' :
+                                                        a.status === 'ai_graded' ? 'bg-violet-50 text-violet-600' :
+                                                            'bg-yellow-50 text-yellow-600'
+                                                )}>
+                                                    {a.status === 'reviewed' ? '已复核' : a.status === 'ai_graded' ? 'AI 已评' : '待批阅'}
+                                                </span>
                                             </div>
-                                            <div className="space-y-1">
-                                                {a.file_url.split(',').filter(Boolean).map((url: string, i: number) => {
-                                                    const name = url.split('/').pop()?.replace(/^[a-f0-9]+_/, '') || '附件';
-                                                    return (
-                                                        <a
-                                                            key={i}
-                                                            href={url}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-800 hover:underline"
-                                                        >
-                                                            <Download className="w-3 h-3" />
-                                                            {name}
-                                                        </a>
-                                                    );
-                                                })}
+                                            <span className="text-xs text-gray-400">{new Date(a.created_at).toLocaleDateString('zh-CN')}</span>
+                                        </div>
+                                        <p className="text-sm text-gray-700 line-clamp-3 mb-3">{a.content || '(无文本内容)'}</p>
+
+                                        {/* 附件链接 */}
+                                        {a.file_url && (
+                                            <div className="mb-3 bg-gray-50 rounded-lg p-2.5">
+                                                <div className="flex items-center gap-1.5 mb-1.5">
+                                                    <Paperclip className="w-3 h-3 text-gray-500" />
+                                                    <span className="text-xs font-medium text-gray-600">附件</span>
+                                                </div>
+                                                <div className="space-y-1">
+                                                    {a.file_url.split(',').filter(Boolean).map((url: string, i: number) => {
+                                                        const name = url.split('/').pop()?.replace(/^[a-f0-9]+_/, '') || '附件';
+                                                        return (
+                                                            <a
+                                                                key={i}
+                                                                href={url}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-800 hover:underline"
+                                                            >
+                                                                <Download className="w-3 h-3" />
+                                                                {name}
+                                                            </a>
+                                                        );
+                                                    })}
+                                                </div>
                                             </div>
-                                        </div>
-                                    )}
-
-                                    {/* AI 评分结果 */}
-                                    {a.ai_review && (
-                                        <div className="bg-violet-50 rounded-lg p-3 mb-3">
-                                            <p className="text-xs font-medium text-violet-700 mb-1">AI 评分</p>
-                                            <div className="flex gap-3 text-xs text-violet-600">
-                                                <span>批判性思维: {a.ai_review.scores?.critical_thinking ?? '-'}</span>
-                                                <span>论据: {a.ai_review.scores?.evidence ?? '-'}</span>
-                                                <span>逻辑: {a.ai_review.scores?.logic ?? '-'}</span>
-                                                <span className="font-bold">总分: {a.ai_review.total_score ?? '-'}</span>
-                                            </div>
-                                            {a.ai_review.summary && <p className="text-xs text-violet-500 mt-1">{a.ai_review.summary}</p>}
-                                        </div>
-                                    )}
-
-                                    {/* 教师复核结果 */}
-                                    {a.teacher_review && (
-                                        <div className="bg-green-50 rounded-lg p-3 mb-3">
-                                            <p className="text-xs font-medium text-green-700 mb-1">教师复核</p>
-                                            <p className="text-xs text-green-600">评分: {a.teacher_review.score ?? '-'} | {a.teacher_review.comment || '无评语'}</p>
-                                        </div>
-                                    )}
-
-                                    <div className="flex gap-2">
-                                        {a.status === 'submitted' && (
-                                            <button onClick={() => handleAiGrade(a.assignment_id)} className="flex items-center gap-1 px-3 py-1.5 text-xs text-white bg-violet-600 rounded-lg hover:bg-violet-700">
-                                                <Star className="w-3 h-3" /> AI 评分
-                                            </button>
                                         )}
-                                        <button onClick={() => { setReviewingAssignment(a); setReviewScore(''); setReviewComment(''); }} className="flex items-center gap-1 px-3 py-1.5 text-xs text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
-                                            <ClipboardCheck className="w-3 h-3" /> 教师复核
-                                        </button>
-                                    </div>
-                                </div>
-                            ))}
-                            {assignments.length === 0 && <div className="text-center py-8 text-gray-300 text-sm">暂无作业</div>}
-                        </div>
 
-                        {/* 复核弹窗 */}
-                        {reviewingAssignment && (
-                            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-                                <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <h3 className="text-sm font-semibold text-gray-900">教师复核</h3>
-                                        <button onClick={() => setReviewingAssignment(null)} className="text-gray-400 hover:text-gray-600">✕</button>
+                                        {/* AI 评分结果 */}
+                                        {a.ai_review && (
+                                            <div className="bg-violet-50 rounded-lg p-3 mb-3">
+                                                <p className="text-xs font-medium text-violet-700 mb-1">AI 评分</p>
+                                                <div className="flex gap-3 text-xs text-violet-600">
+                                                    <span>批判性思维: {a.ai_review.scores?.critical_thinking ?? '-'}</span>
+                                                    <span>论据: {a.ai_review.scores?.evidence ?? '-'}</span>
+                                                    <span>逻辑: {a.ai_review.scores?.logic ?? '-'}</span>
+                                                    <span className="font-bold">总分: {a.ai_review.total_score ?? '-'}</span>
+                                                </div>
+                                                {a.ai_review.summary && <p className="text-xs text-violet-500 mt-1">{a.ai_review.summary}</p>}
+                                            </div>
+                                        )}
+
+                                        {/* 教师复核结果 */}
+                                        {a.teacher_review && (
+                                            <div className="bg-green-50 rounded-lg p-3 mb-3">
+                                                <p className="text-xs font-medium text-green-700 mb-1">教师复核</p>
+                                                <p className="text-xs text-green-600">评分: {a.teacher_review.score ?? '-'} | {a.teacher_review.comment || '无评语'}</p>
+                                            </div>
+                                        )}
+
+                                        <div className="flex gap-2">
+                                            {a.status === 'submitted' && (
+                                                <button onClick={() => handleAiGrade(a.assignment_id)} className="flex items-center gap-1 px-3 py-1.5 text-xs text-white bg-violet-600 rounded-lg hover:bg-violet-700">
+                                                    <Star className="w-3 h-3" /> AI 评分
+                                                </button>
+                                            )}
+                                            <button onClick={() => { setReviewingAssignment(a); setReviewScore(''); setReviewComment(''); }} className="flex items-center gap-1 px-3 py-1.5 text-xs text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
+                                                <ClipboardCheck className="w-3 h-3" /> 教师复核
+                                            </button>
+                                        </div>
                                     </div>
-                                    <div className="space-y-4">
-                                        <div>
-                                            <label className="block text-xs font-medium text-gray-700 mb-1">评分 (0-30)</label>
-                                            <input type="number" value={reviewScore} onChange={(e) => setReviewScore(e.target.value)} min="0" max="30" className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-medium text-gray-700 mb-1">评语</label>
-                                            <textarea value={reviewComment} onChange={(e) => setReviewComment(e.target.value)} rows={3} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none" />
-                                        </div>
-                                        <div className="flex justify-end gap-2 pt-2">
-                                            <button onClick={() => setReviewingAssignment(null)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">取消</button>
-                                            <button onClick={handleTeacherReview} className="px-4 py-2 text-sm text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors">提交</button>
-                                        </div>
-                                    </div>
-                                </div>
+                                ))}
+                                {assignments.length === 0 && <div className="text-center py-8 text-gray-300 text-sm">暂无作业</div>}
                             </div>
-                        )}
-                    </div>
-                )}
 
-
-
-                {/* ────── P2-11: 课程管理 ────── */}
-                {activeTab === 'courses' && (
-                    <div>
-                        <div className="flex items-center justify-between mb-6">
-                            <h1 className="text-xl font-bold text-gray-900">课程管理</h1>
-                            <button onClick={loadCourses} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
-                                <RefreshCw className="w-3.5 h-3.5" /> 刷新
-                            </button>
+                            {/* 复核弹窗 */}
+                            {reviewingAssignment && (
+                                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+                                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <h3 className="text-sm font-semibold text-gray-900">教师复核</h3>
+                                            <button onClick={() => setReviewingAssignment(null)} className="text-gray-400 hover:text-gray-600">✕</button>
+                                        </div>
+                                        <div className="space-y-4">
+                                            <div>
+                                                <label className="block text-xs font-medium text-gray-700 mb-1">评分 (0-30)</label>
+                                                <input type="number" value={reviewScore} onChange={(e) => setReviewScore(e.target.value)} min="0" max="30" className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-medium text-gray-700 mb-1">评语</label>
+                                                <textarea value={reviewComment} onChange={(e) => setReviewComment(e.target.value)} rows={3} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none" />
+                                            </div>
+                                            <div className="flex justify-end gap-2 pt-2">
+                                                <button onClick={() => setReviewingAssignment(null)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">取消</button>
+                                                <button onClick={handleTeacherReview} className="px-4 py-2 text-sm text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors">提交</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
+                    )}
 
-                        {/* 创建课程表单 */}
-                        <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
-                            <h3 className="text-sm font-semibold text-gray-900 mb-3">创建新课程</h3>
-                            <div className="flex items-end gap-3">
-                                <div className="flex-1">
-                                    <label className="block text-xs text-gray-500 mb-1">课程名称</label>
-                                    <input type="text" value={newCourseName} onChange={(e) => setNewCourseName(e.target.value)} placeholder="例：批判性思维导论" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-                                </div>
-                                <div className="flex-1">
-                                    <label className="block text-xs text-gray-500 mb-1">描述（可选）</label>
-                                    <input type="text" value={newCourseDesc} onChange={(e) => setNewCourseDesc(e.target.value)} placeholder="课程简介..." className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-                                </div>
-                                <button onClick={handleCreateCourse} className="px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 whitespace-nowrap">
-                                    创建
+
+
+                    {/* ────── P2-11: 课程管理 ────── */}
+                    {activeTab === 'courses' && (
+                        <div>
+                            <div className="flex items-center justify-between mb-6">
+                                <h1 className="text-xl font-bold text-gray-900">课程管理</h1>
+                                <button onClick={loadCourses} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
+                                    <RefreshCw className="w-3.5 h-3.5" /> 刷新
                                 </button>
                             </div>
-                        </div>
 
-                        {/* 课程列表 */}
-                        <div className="space-y-3">
-                            {courses.map((c) => (
-                                <div key={c.course_id as string} className="bg-white rounded-xl border border-gray-200 p-4">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <h3 className="text-sm font-medium text-gray-900">{c.name as string}</h3>
-                                        <button
-                                            onClick={() => { navigator.clipboard.writeText(c.invite_code as string); alert('邀请码已复制'); }}
-                                            className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800"
-                                        >
-                                            <Copy className="w-3 h-3" />
-                                            {c.invite_code as string}
-                                        </button>
+                            {/* 创建课程表单 */}
+                            <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
+                                <h3 className="text-sm font-semibold text-gray-900 mb-3">创建新课程</h3>
+                                <div className="flex items-end gap-3">
+                                    <div className="flex-1">
+                                        <label className="block text-xs text-gray-500 mb-1">课程名称</label>
+                                        <input type="text" value={newCourseName} onChange={(e) => setNewCourseName(e.target.value)} placeholder="例：批判性思维导论" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
                                     </div>
-                                    {c.description ? <p className="text-xs text-gray-400 mb-2">{String(c.description)}</p> : null}
-                                    <p className="text-[10px] text-gray-300">
-                                        创建于 {c.created_at ? new Date(c.created_at as string).toLocaleDateString('zh-CN') : '-'}
-                                    </p>
+                                    <div className="flex-1">
+                                        <label className="block text-xs text-gray-500 mb-1">描述（可选）</label>
+                                        <input type="text" value={newCourseDesc} onChange={(e) => setNewCourseDesc(e.target.value)} placeholder="课程简介..." className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+                                    </div>
+                                    <button onClick={handleCreateCourse} className="px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 whitespace-nowrap">
+                                        创建
+                                    </button>
                                 </div>
-                            ))}
-                            {courses.length === 0 && <div className="text-center py-8 text-gray-300 text-sm">暂无课程</div>}
-                        </div>
-                    </div>
-                )}
-            </div>
-        </div>
+                            </div>
 
-            {/* 修改密码弹窗 */ }
-    {
-        showPasswordModal && (
-            <ChangePasswordModal onClose={() => setShowPasswordModal(false)} />
-        )
-    }
+                            {/* 课程列表 */}
+                            <div className="space-y-3">
+                                {courses.map((c) => (
+                                    <div key={c.course_id as string} className="bg-white rounded-xl border border-gray-200 p-4">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <h3 className="text-sm font-medium text-gray-900">{c.name as string}</h3>
+                                            <button
+                                                onClick={() => { navigator.clipboard.writeText(c.invite_code as string); alert('邀请码已复制'); }}
+                                                className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800"
+                                            >
+                                                <Copy className="w-3 h-3" />
+                                                {c.invite_code as string}
+                                            </button>
+                                        </div>
+                                        {c.description ? <p className="text-xs text-gray-400 mb-2">{String(c.description)}</p> : null}
+                                        <p className="text-[10px] text-gray-300">
+                                            创建于 {c.created_at ? new Date(c.created_at as string).toLocaleDateString('zh-CN') : '-'}
+                                        </p>
+                                    </div>
+                                ))}
+                                {courses.length === 0 && <div className="text-center py-8 text-gray-300 text-sm">暂无课程</div>}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* 修改密码弹窗 */}
+            {
+                showPasswordModal && (
+                    <ChangePasswordModal onClose={() => setShowPasswordModal(false)} />
+                )
+            }
         </div >
     );
 };

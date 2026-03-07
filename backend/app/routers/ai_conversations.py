@@ -193,3 +193,39 @@ async def delete_conversation(
     )
     await db.commit()
     return {"ok": True}
+
+
+@router.post("/{conversation_id}/summarize")
+async def summarize_conversation(
+    conversation_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """为指定对话生成一句话摘要（跨窗口记忆用）。
+
+    前端在用户切换对话时调用此接口。
+    若对话消息 < 4 条或已有摘要，则跳过。
+    """
+    # 验证归属
+    convo = await db.execute(
+        select(AiConversation).where(
+            AiConversation.conversation_id == conversation_id,
+            AiConversation.user_id == user.user_id,
+        )
+    )
+    if not convo.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    import asyncio
+    from app.services.summary_service import generate_conversation_summary
+
+    # 异步执行，不阻塞返回
+    asyncio.create_task(
+        generate_conversation_summary(
+            conversation_id=conversation_id,
+            user_id=str(user.user_id),
+            db=db,
+        )
+    )
+    return {"ok": True, "message": "摘要生成已排队"}
+

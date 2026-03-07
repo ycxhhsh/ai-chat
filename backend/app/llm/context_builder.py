@@ -52,6 +52,8 @@ async def build_sandwich_context(
     scaffold_prompt: str | None = None,
     uploaded_file_text: str | None = None,
     max_history: int = 50,
+    user_id: str | None = None,
+    conversation_id: str | None = None,
 ) -> list[dict[str, str]]:
     """组装三明治上下文。
 
@@ -95,6 +97,26 @@ async def build_sandwich_context(
         })
 
     pinned_tokens = estimate_messages_tokens(messages)
+
+    # 1d. 跨窗口对话摘要（轻量跨会话记忆）
+    if user_id:
+        try:
+            from app.services.summary_service import load_user_summaries
+            summaries = await load_user_summaries(
+                user_id, limit=10,
+                exclude_conversation_id=conversation_id,
+            )
+            if summaries:
+                summary_text = "\n".join(
+                    f"[历史对话{i+1}] {s}" for i, s in enumerate(summaries)
+                )
+                messages.append({
+                    "role": "system",
+                    "content": f"=== 该学生此前讨论摘要 ===\n{summary_text}",
+                })
+                pinned_tokens = estimate_messages_tokens(messages)
+        except Exception as e:
+            logger.warning("Cross-conversation summary injection failed: %s", e)
 
     # ═══════════════════════════════════════════
     # 第 2 层：RAG（动态检索切片）

@@ -287,6 +287,8 @@ async def _trigger_ai_reply(
         llm_provider=llm_provider,
         scaffold_prompt=scaffold_prompt,
         uploaded_file_text=uploaded_file_text,
+        user_id=user_info.get("user_id"),
+        conversation_id=conversation_id,
     )
 
     queue = get_queue()

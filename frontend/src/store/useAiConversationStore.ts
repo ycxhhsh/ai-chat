@@ -53,6 +53,11 @@ export const useAiConversationStore = create<AiConversationState>((set, get) => 
     },
 
     selectConversation: (id) => {
+        const prev = get().currentConversationId;
+        // 切换时，为旧对话异步生成摘要（fire-and-forget）
+        if (prev && prev !== id) {
+            api.aiConversations.summarize(prev).catch(() => { });
+        }
         set({ currentConversationId: id });
     },
 

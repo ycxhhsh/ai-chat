@@ -18,6 +18,10 @@ from app.models.user import User
 from app.models.group import Group, GroupMember
 from app.models.assignment import Assignment
 from app.models.ai_conversation import AiConversation
+from app.services.analytics_service import (
+    build_participation_heatmap,
+    build_word_cloud,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/teacher", tags=["teacher"])
@@ -431,6 +435,12 @@ async def get_analytics(
     except Exception as e:
         logger.warning("Active sessions query failed: %s", e)
 
+    # 7. 参与度热力图（学生×日期）
+    participation_heatmap = await build_participation_heatmap(db)
+
+    # 8. 词云
+    word_cloud = await build_word_cloud(db)
+
     return {
         "scaffold_usage": scaffold_heatmap,
         "ai_intervention_rate": ai_intervention_rate,
@@ -438,6 +448,8 @@ async def get_analytics(
         "discussion_depth": discussion_depth,
         "scaffold_dependency": scaffold_dependency,
         "active_sessions": active_sessions,
+        "participation_heatmap": participation_heatmap,
+        "word_cloud": word_cloud,
     }
 
 

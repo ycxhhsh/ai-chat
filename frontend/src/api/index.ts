@@ -222,6 +222,10 @@ export const api = {
             const res = await http.patch(`/ai-conversations/${conversationId}`, { title });
             return res.data;
         },
+        summarize: async (conversationId: string) => {
+            const res = await http.post(`/ai-conversations/${conversationId}/summarize`);
+            return res.data;
+        },
     },
 
     llm: {
@@ -249,6 +253,10 @@ export const api = {
             const res = await http.post('/roster/import', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
             });
+            return res.data;
+        },
+        addOne: async (name: string, studentId: string) => {
+            const res = await http.post('/roster/add-one', { name, student_id: studentId });
             return res.data;
         },
     },

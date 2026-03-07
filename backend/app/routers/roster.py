@@ -11,10 +11,53 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import get_db, require_teacher
 from app.core.security import hash_password
 from app.models.user import User
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/roster", tags=["roster"])
+
+
+class AddStudentRequest(BaseModel):
+    name: str
+    student_id: str
+
+
+@router.post("/add-one")
+async def add_one_student(
+    body: AddStudentRequest,
+    db: AsyncSession = Depends(get_db),
+    _teacher: User = Depends(require_teacher),
+):
+    """教师手动添加单个学生账号。
+
+    - email = {student_id}@stu.edu
+    - 默认密码 = 123456
+    - 若学号已存在返回 409
+    """
+    name = body.name.strip()
+    sid = body.student_id.strip()
+
+    if not name or not sid:
+        raise HTTPException(status_code=400, detail="姓名和学号不能为空")
+
+    email = f"{sid}@stu.edu"
+
+    existing = await db.execute(select(User).where(User.email == email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail=f"学号 {sid} 已存在")
+
+    user = User(
+        email=email,
+        password_hash=hash_password("123456"),
+        name=name,
+        role="student",
+    )
+    db.add(user)
+    await db.commit()
+
+    return {"message": f"学生 {name}({sid}) 创建成功", "email": email}
+
 
 
 @router.post("/import")
