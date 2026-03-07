@@ -36,8 +36,7 @@ class Settings(BaseSettings):
     zhipu_api_key: str = Field(default="", alias="ZHIPU_API_KEY")
     tongyi_api_key: str = Field(default="", alias="TONGYI_API_KEY")
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
-    gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
-    claude_api_key: str = Field(default="", alias="CLAUDE_API_KEY")
+    closeai_api_key: str = Field(default="", alias="CLOSEAI_API_KEY")
 
     # ── Embedding（云端 API） ──
     embedding_api_key: str = Field(default="", alias="EMBEDDING_API_KEY")

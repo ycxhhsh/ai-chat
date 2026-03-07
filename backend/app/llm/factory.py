@@ -40,14 +40,24 @@ _PROVIDER_REGISTRY: dict[str, dict[str, str]] = {
         "model": "gpt-4o-mini",
     },
     "gemini": {
-        "key_field": "gemini_api_key",
-        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-        "model": "gemini-2.0-flash",
+        "key_field": "closeai_api_key",
+        "base_url": "https://api.openai-proxy.org/v1",
+        "model": "gemini-3.1-flash-lite-preview",
     },
     "claude": {
-        "key_field": "claude_api_key",
-        "base_url": "https://api.anthropic.com",
-        "model": "claude-3-5-haiku-latest",
+        "key_field": "closeai_api_key",
+        "base_url": "https://api.openai-proxy.org/v1",
+        "model": "claude-sonnet-4-6",
+    },
+    "chatgpt": {
+        "key_field": "closeai_api_key",
+        "base_url": "https://api.openai-proxy.org/v1",
+        "model": "gpt-5.4",
+    },
+    "minimax": {
+        "key_field": "closeai_api_key",
+        "base_url": "https://api.openai-proxy.org/v1",
+        "model": "MiniMax-M2.5",
     },
 }
 
@@ -95,6 +105,18 @@ def get_llm_client(
 
 def get_available_providers() -> list[dict[str, str]]:
     """返回当前已配置 API Key 的可用 Provider 列表。"""
+    _DISPLAY_NAMES = {
+        "deepseek": "DeepSeek",
+        "kimi": "Kimi (月之暗面)",
+        "doubao": "豆包",
+        "zhipu": "智谱 GLM",
+        "tongyi": "通义千问",
+        "openai": "OpenAI",
+        "gemini": "Gemini",
+        "claude": "Claude",
+        "chatgpt": "ChatGPT",
+        "minimax": "MiniMax",
+    }
     settings = get_settings()
     available = []
     for name, cfg in _PROVIDER_REGISTRY.items():
@@ -102,7 +124,7 @@ def get_available_providers() -> list[dict[str, str]]:
         if api_key:
             available.append({
                 "name": name,
-                "display_name": name.capitalize(),
+                "display_name": _DISPLAY_NAMES.get(name, name.capitalize()),
                 "model": cfg["model"],
             })
     return available
