@@ -299,6 +299,7 @@ async def get_analytics(
         ]
     except Exception as e:
         logger.warning("Scaffold heatmap query failed: %s", e)
+        await db.rollback()
 
     # 2. AI 介入率：每个学生的 AI/总消息比
     ai_intervention_rate = []
@@ -343,6 +344,7 @@ async def get_analytics(
         ai_intervention_rate.sort(key=lambda x: x["ai_ratio"], reverse=True)
     except Exception as e:
         logger.warning("AI intervention rate query failed: %s", e)
+        await db.rollback()
 
     # 3. 参与度曲线：按小时聚合消息数
     participation_curve = []
@@ -362,6 +364,7 @@ async def get_analytics(
         ]
     except Exception as e:
         logger.warning("Participation curve query failed: %s", e)
+        await db.rollback()
 
     # 4. 讨论深度：消息平均长度（按学生）
     discussion_depth = []
@@ -382,6 +385,7 @@ async def get_analytics(
         ]
     except Exception as e:
         logger.warning("Discussion depth query failed: %s", e)
+        await db.rollback()
 
     # 5. 支架依赖度（全局）
     scaffold_dependency = {"total": 0, "scaffold_used": 0, "rate": 0}
@@ -410,6 +414,7 @@ async def get_analytics(
         }
     except Exception as e:
         logger.warning("Scaffold dependency query failed: %s", e)
+        await db.rollback()
 
     # 6. 活跃会话
     active_sessions = []
@@ -434,6 +439,7 @@ async def get_analytics(
         ]
     except Exception as e:
         logger.warning("Active sessions query failed: %s", e)
+        await db.rollback()
 
     # 7. 参与度热力图（学生×日期）
     participation_heatmap = await build_participation_heatmap(db)
