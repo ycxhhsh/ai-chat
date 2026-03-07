@@ -1,0 +1,5 @@
+# CoThink 部署配置
+SERVER_IP=101.37.214.150
+SERVER_USER=root
+SERVER_PATH=/opt/cothink
+SSH_KEY=~/.ssh/id_ed25519

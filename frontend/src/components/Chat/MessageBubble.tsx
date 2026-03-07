@@ -6,7 +6,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import type { ChatMessage } from '../../types';
 import { useChatStore } from '../../store/useChatStore';
 import clsx from 'clsx';
-import { Check, CheckCheck, AlertCircle, GripVertical } from 'lucide-react';
+import { Check, CheckCheck, AlertCircle, GripVertical, Copy } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -23,6 +23,7 @@ export const MessageBubble: React.FC<Props> = ({ message, isOwn }) => {
     const setHighlightedMsgId = useChatStore((s) => s.setHighlightedMsgId);
 
     const [isHighlighted, setIsHighlighted] = useState(false);
+    const [copied, setCopied] = useState(false);
 
     // 溯源高亮：当 highlightedMsgId 匹配时闪烁
     useEffect(() => {
@@ -59,8 +60,6 @@ export const MessageBubble: React.FC<Props> = ({ message, isOwn }) => {
                 isOwn && 'flex-row-reverse',
                 isHighlighted && 'ring-2 ring-yellow-400 bg-yellow-50/60 rounded-2xl transition-all duration-500',
             )}
-            draggable
-            onDragStart={handleDragStart}
         >
             {/* 头像 */}
             <div
@@ -101,8 +100,15 @@ export const MessageBubble: React.FC<Props> = ({ message, isOwn }) => {
                                 : 'bg-white text-gray-800 border border-gray-200 rounded-bl-md'
                     )}
                 >
-                    {/* 拖拽提示图标 */}
-                    <GripVertical className="absolute -left-5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-300 opacity-0 group-hover/msg:opacity-60 transition-opacity" />
+                    {/* 拖拽手柄（仅手柄可拖拽，正文可选中） */}
+                    <div
+                        draggable
+                        onDragStart={handleDragStart}
+                        className="absolute -left-5 top-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing opacity-0 group-hover/msg:opacity-60 transition-opacity"
+                        title="拖拽到思维导图"
+                    >
+                        <GripVertical className="w-3.5 h-3.5 text-gray-300" />
+                    </div>
 
                     {/* 支架标记 */}
                     {metadata_info?.is_scaffold_used && metadata_info?.scaffold_info && (
@@ -142,6 +148,22 @@ export const MessageBubble: React.FC<Props> = ({ message, isOwn }) => {
                     {isOwn && status === 'failed' && (
                         <AlertCircle className="w-3 h-3 text-red-400" />
                     )}
+                    {/* Sprint 5: 复制按钮 */}
+                    <button
+                        onClick={() => {
+                            navigator.clipboard.writeText(content);
+                            setCopied(true);
+                            setTimeout(() => setCopied(false), 1500);
+                        }}
+                        className="opacity-0 group-hover/msg:opacity-60 transition-opacity hover:opacity-100 p-0.5"
+                        title="复制消息"
+                    >
+                        {copied ? (
+                            <Check className="w-3 h-3 text-green-500" />
+                        ) : (
+                            <Copy className="w-3 h-3 text-gray-400" />
+                        )}
+                    </button>
                 </div>
             </div>
         </div>

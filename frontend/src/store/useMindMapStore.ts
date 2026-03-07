@@ -22,7 +22,10 @@ export type FlowEdge = Edge;
 // ── 转换函数 ──
 
 /** 后端 MindMapNode → React Flow Node */
-function toFlowNode(n: MindMapNode & { source_message_id?: string }): FlowNode {
+function toFlowNode(n: MindMapNode & { source_message_id?: string; source_message_ids?: string[] }): FlowNode {
+    // 兼容旧的 source_message_id (string) 和新的 source_message_ids (array)
+    const ids: string[] = n.source_message_ids
+        ?? (n.source_message_id ? [n.source_message_id] : []);
     const base: FlowNode = {
         id: n.id,
         type: 'mindMapNode',
@@ -30,7 +33,7 @@ function toFlowNode(n: MindMapNode & { source_message_id?: string }): FlowNode {
         data: {
             label: n.label,
             nodeType: n.type,
-            ...(n.source_message_id ? { source_message_id: n.source_message_id } : {}),
+            ...(ids.length > 0 ? { source_message_ids: ids } : {}),
         },
     };
     if (n.type === 'suggestion') {
@@ -101,6 +104,9 @@ interface MindMapState {
     draftRawEdges: MindMapEdge[];
     hasDraft: boolean;
 
+    /** Sprint 5: 切换不丢失的内存缓存 */
+    mapCache: Map<string, { nodes: FlowNode[]; edges: FlowEdge[]; mapId: string | null; version: number }>;
+
     /* 批量设置 */
     setMindMapData: (data: MindMapData) => void;
 
@@ -109,7 +115,7 @@ interface MindMapState {
     onEdgesChange: (changes: EdgeChange<FlowEdge>[]) => void;
 
     /* 增删改 */
-    addNode: (node: MindMapNode & { source_message_id?: string }) => void;
+    addNode: (node: MindMapNode & { source_message_id?: string; source_message_ids?: string[] }) => void;
     removeNode: (nodeId: string) => void;
     updateNode: (nodeId: string, updates: Partial<MindMapNode>) => void;
     addEdge: (edge: MindMapEdge) => void;
@@ -145,6 +151,7 @@ export const useMindMapStore = create<MindMapState>()((set, get) => ({
     draftRawNodes: [],
     draftRawEdges: [],
     hasDraft: false,
+    mapCache: new Map(),
 
     setMindMapData: (data) =>
         set({
@@ -226,15 +233,28 @@ export const useMindMapStore = create<MindMapState>()((set, get) => ({
         const rawNodes = [...draftRawNodes];
         const rawEdges = [...draftRawEdges];
 
-        set((s) => ({
-            nodes: [...s.nodes, ...draftRawNodes.map(toFlowNode)],
-            edges: [...s.edges, ...draftRawEdges.map(toFlowEdge)],
-            draftNodes: [],
-            draftEdges: [],
-            draftRawNodes: [],
-            draftRawEdges: [],
-            hasDraft: false,
-        }));
+        set((s) => {
+            // Sprint 5: 采纳后同步更新 mapCache
+            const newNodes = [...s.nodes, ...draftRawNodes.map(toFlowNode)];
+            const newEdges = [...s.edges, ...draftRawEdges.map(toFlowEdge)];
+            if (s.currentMapKey) {
+                s.mapCache.set(s.currentMapKey, {
+                    nodes: newNodes,
+                    edges: newEdges,
+                    mapId: s.currentMapId,
+                    version: s.version,
+                });
+            }
+            return {
+                nodes: newNodes,
+                edges: newEdges,
+                draftNodes: [],
+                draftEdges: [],
+                draftRawNodes: [],
+                draftRawEdges: [],
+                hasDraft: false,
+            };
+        });
 
         return { nodes: rawNodes, edges: rawEdges };
     },
@@ -266,9 +286,38 @@ export const useMindMapStore = create<MindMapState>()((set, get) => ({
         }),
 
     loadMindMap: async (mapKey: string) => {
-        const current = get().currentMapKey;
-        if (current === mapKey) return;
-        // 清空当前图
+        const state = get();
+        if (state.currentMapKey === mapKey) return;
+
+        // Sprint 5: 切换前保存当前状态到缓存
+        if (state.currentMapKey && state.nodes.length > 0) {
+            state.mapCache.set(state.currentMapKey, {
+                nodes: state.nodes,
+                edges: state.edges,
+                mapId: state.currentMapId,
+                version: state.version,
+            });
+        }
+
+        // Sprint 5: 先查缓存，命中直接恢复
+        const cached = state.mapCache.get(mapKey);
+        if (cached) {
+            set({
+                nodes: cached.nodes,
+                edges: cached.edges,
+                currentMapId: cached.mapId,
+                currentMapKey: mapKey,
+                version: cached.version,
+                draftNodes: [],
+                draftEdges: [],
+                draftRawNodes: [],
+                draftRawEdges: [],
+                hasDraft: false,
+            });
+            return;
+        }
+
+        // 未命中缓存，清空并调 API
         set({
             nodes: [],
             edges: [],
@@ -284,10 +333,19 @@ export const useMindMapStore = create<MindMapState>()((set, get) => ({
         try {
             const data = await api.mindmaps.get(mapKey);
             if (data && data.nodes && data.nodes.length > 0 && get().currentMapKey === mapKey) {
+                const flowNodes = data.nodes.map(toFlowNode);
+                const flowEdges = data.edges.map(toFlowEdge);
                 set({
-                    nodes: data.nodes.map(toFlowNode),
-                    edges: data.edges.map(toFlowEdge),
+                    nodes: flowNodes,
+                    edges: flowEdges,
                     currentMapId: data.id || null,
+                    version: data.version || 0,
+                });
+                // 存入缓存
+                get().mapCache.set(mapKey, {
+                    nodes: flowNodes,
+                    edges: flowEdges,
+                    mapId: data.id || null,
                     version: data.version || 0,
                 });
             }

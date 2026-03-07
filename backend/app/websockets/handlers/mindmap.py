@@ -85,7 +85,7 @@ async def _generate_mindmap(
                 select(Message)
                 .where(Message.session_id == session_id)
                 .order_by(Message.created_at.desc())
-                .limit(50)
+                .limit(30)
             )
             messages = result.scalars().all()
 

@@ -38,8 +38,10 @@ import dagre from '@dagrejs/dagre';
 import { useMindMapStore, type FlowNode, type FlowEdge } from '../../store/useMindMapStore';
 import { useChatStore } from '../../store/useChatStore';
 import type { MindMapNodeData, MindMapNodeType } from '../../types';
-import { Loader2, Sparkles, Plus, Download, MessageCircle, ChevronDown, LayoutGrid, Search } from 'lucide-react';
+import { Loader2, Sparkles, Plus, Download, MessageCircle, ChevronDown, LayoutGrid, Search, Maximize2, Minimize2 } from 'lucide-react';
 import { DraftOverlay } from './DraftOverlay';
+import { toPng } from 'html-to-image';
+import clsx from 'clsx';
 
 // ── 颜色映射（柔和 pastel 填充 + 浅色边框） ──
 
@@ -159,7 +161,8 @@ function MindMapCustomNode({ data, id, selected }: NodeProps<Node<MindMapNodeDat
     const colors = NODE_COLORS[data.nodeType] || NODE_COLORS.concept;
     const emoji = NODE_EMOJIS[data.nodeType] || '💡';
     const typeLabel = NODE_TYPE_LABELS[data.nodeType] || '概念';
-    const sourceMessageId = data.source_message_id as string | undefined;
+    const sourceMessageIds = (data.source_message_ids as string[] | undefined)
+        ?? (data.source_message_id ? [data.source_message_id as string] : []);
 
     useEffect(() => {
         if (isEditing && inputRef.current) {
@@ -187,6 +190,21 @@ function MindMapCustomNode({ data, id, selected }: NodeProps<Node<MindMapNodeDat
         },
         [handleSave]
     );
+
+    // 多消息溯源：依次高亮，500ms 间隔
+    const handleTraceSource = useCallback(() => {
+        if (sourceMessageIds.length === 0) return;
+        if (sourceMessageIds.length === 1) {
+            setHighlightedMsgId(sourceMessageIds[0]);
+            return;
+        }
+        // 依次高亮多条消息
+        sourceMessageIds.forEach((msgId, idx) => {
+            setTimeout(() => {
+                setHighlightedMsgId(msgId);
+            }, idx * 500);
+        });
+    }, [sourceMessageIds, setHighlightedMsgId]);
 
     // 快捷连接：创建子节点 + 边
     const handleQuickConnect = useCallback(
@@ -264,15 +282,15 @@ function MindMapCustomNode({ data, id, selected }: NodeProps<Node<MindMapNodeDat
                 >
                     <span className="text-sm leading-none">{emoji}</span>
                     <span className="flex-1">{typeLabel}</span>
-                    {/* Sprint 2: 溯源图标 */}
-                    {sourceMessageId && (
+                    {/* Sprint 5: 多消息溯源图标 */}
+                    {sourceMessageIds.length > 0 && (
                         <button
                             onClick={(e) => {
                                 e.stopPropagation();
-                                setHighlightedMsgId(sourceMessageId);
+                                handleTraceSource();
                             }}
                             className="p-0.5 rounded hover:bg-white/50 transition-colors"
-                            title="定位原始消息"
+                            title={`定位原始消息 (${sourceMessageIds.length}条)`}
                         >
                             <Search className="w-3 h-3" />
                         </button>
@@ -472,6 +490,25 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
     } = useMindMapStore();
 
     const [showExportMenu, setShowExportMenu] = useState(false);
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    // Sprint 5 Task 5: 全屏切换
+    const handleFullscreenToggle = useCallback(() => {
+        if (!containerRef.current) return;
+        if (!document.fullscreenElement) {
+            containerRef.current.requestFullscreen().catch(() => { });
+        } else {
+            document.exitFullscreen().catch(() => { });
+        }
+    }, []);
+
+    // 监听 fullscreenchange 事件同步状态
+    useEffect(() => {
+        const handler = () => setIsFullscreen(!!document.fullscreenElement);
+        document.addEventListener('fullscreenchange', handler);
+        return () => document.removeEventListener('fullscreenchange', handler);
+    }, []);
 
     // 合并正式节点和草稿节点
     const mergedNodes = useMemo(() => [...nodes, ...draftNodes], [nodes, draftNodes]);
@@ -595,60 +632,30 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
         setShowExportMenu(false);
     }, [exportAsMarkdown]);
 
-    // 导出图片（SVG 格式，兼容性最好）
+    // Sprint 5 Task 7: 导出 PNG（使用 html-to-image）
     const handleExportPng = useCallback(() => {
-        const flowEl = document.querySelector('.react-flow') as HTMLElement;
+        const flowEl = document.querySelector('.react-flow__viewport') as HTMLElement;
         if (!flowEl) { alert('无法找到画布'); return; }
 
-        // 获取 SVG 边和 HTML 节点
-        const svgEdges = flowEl.querySelector('.react-flow__edges') as SVGElement;
-        const nodeContainer = flowEl.querySelector('.react-flow__nodes') as HTMLElement;
-        if (!svgEdges || !nodeContainer) { alert('画布为空'); return; }
-
-        const viewportEl = flowEl.querySelector('.react-flow__viewport') as HTMLElement;
-        const flowRect = flowEl.getBoundingClientRect();
-        const w = flowRect.width;
-        const h = flowRect.height;
-
-        // 克隆 SVG 边
-        const edgesClone = svgEdges.cloneNode(true) as SVGElement;
-
-        // 克隆节点
-        const nodesClone = nodeContainer.cloneNode(true) as HTMLElement;
-
-        // 收集所有内联样式
-        const styles = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
-            .map(s => {
-                if (s.tagName === 'STYLE') return s.outerHTML;
-                return '';
-            }).filter(Boolean).join('\n');
-
-        const svgStr = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-  <rect width="100%" height="100%" fill="#f9fafb"/>
-  <g transform="${viewportEl?.style.transform || ''}">
-    ${edgesClone.innerHTML}
-    <foreignObject width="${w * 3}" height="${h * 3}" x="${-w}" y="${-h}">
-      <div xmlns="http://www.w3.org/1999/xhtml">
-        <style>
-          .react-flow__node { position: absolute; }
-          .react-flow__handle { display: none; }
-          ${styles}
-        </style>
-        ${nodesClone.outerHTML}
-      </div>
-    </foreignObject>
-  </g>
-</svg>`;
-
-        const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `mindmap_${new Date().toISOString().slice(0, 10)}.svg`;
-        a.click();
-        URL.revokeObjectURL(url);
-        setShowExportMenu(false);
+        toPng(flowEl, {
+            backgroundColor: '#f9fafb',
+            pixelRatio: 2,
+            filter: (node) => {
+                // 排除 minimap 和 controls
+                const cls = node.classList?.toString() || '';
+                if (cls.includes('react-flow__minimap') || cls.includes('react-flow__controls')) return false;
+                return true;
+            },
+        }).then((dataUrl) => {
+            const a = document.createElement('a');
+            a.href = dataUrl;
+            a.download = `mindmap_${new Date().toISOString().slice(0, 10)}.png`;
+            a.click();
+            setShowExportMenu(false);
+        }).catch((err) => {
+            console.error('PNG export failed:', err);
+            alert('导出失败，请重试');
+        });
     }, []);
 
     // 用作上下文
@@ -670,7 +677,11 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
 
     return (
         <div
-            className="relative w-full h-full bg-gray-50 rounded-xl border border-gray-200 overflow-hidden"
+            ref={containerRef}
+            className={clsx(
+                'relative w-full h-full bg-gray-50 rounded-xl border border-gray-200 overflow-hidden',
+                isFullscreen && 'rounded-none border-0'
+            )}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
         >            {/* 工具栏 */}
@@ -724,7 +735,7 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
                                     onClick={handleExportPng}
                                     className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                                 >
-                                    🖼️ 导出 SVG 图片
+                                    🖼️ 导出 PNG 图片
                                 </button>
                             </div>
                         )}
@@ -748,6 +759,19 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
                         {nodes.length} 节点 · {edges.length} 连线
                     </span>
                 )}
+
+                {/* Sprint 5 Task 5: 全屏按钮 */}
+                <button
+                    onClick={handleFullscreenToggle}
+                    className="flex items-center gap-1 px-2.5 py-1.5 bg-white/90 backdrop-blur-sm border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 transition-all shadow-sm"
+                    title={isFullscreen ? '退出全屏' : '全屏'}
+                >
+                    {isFullscreen ? (
+                        <Minimize2 className="w-3.5 h-3.5" />
+                    ) : (
+                        <Maximize2 className="w-3.5 h-3.5" />
+                    )}
+                </button>
             </div>
 
             {/* 空状态 */}
