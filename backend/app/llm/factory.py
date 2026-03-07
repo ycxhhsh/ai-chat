@@ -39,6 +39,16 @@ _PROVIDER_REGISTRY: dict[str, dict[str, str]] = {
         "base_url": "https://api.openai.com",
         "model": "gpt-4o-mini",
     },
+    "gemini": {
+        "key_field": "gemini_api_key",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "model": "gemini-2.0-flash",
+    },
+    "claude": {
+        "key_field": "claude_api_key",
+        "base_url": "https://api.anthropic.com",
+        "model": "claude-3-5-haiku-latest",
+    },
 }
 
 

@@ -135,7 +135,7 @@ async def _generate_mindmap(
         ]
 
         full_response = ""
-        async for chunk in client.stream_chat(messages=llm_messages):
+        async for chunk in client.stream_chat(messages=llm_messages, temperature=0.3):
             full_response += chunk
 
         # 解析 JSON

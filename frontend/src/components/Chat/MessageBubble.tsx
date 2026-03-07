@@ -60,6 +60,8 @@ export const MessageBubble: React.FC<Props> = ({ message, isOwn }) => {
                 isOwn && 'flex-row-reverse',
                 isHighlighted && 'ring-2 ring-yellow-400 bg-yellow-50/60 rounded-2xl transition-all duration-500',
             )}
+            draggable
+            onDragStart={handleDragStart}
         >
             {/* 头像 */}
             <div
@@ -100,15 +102,8 @@ export const MessageBubble: React.FC<Props> = ({ message, isOwn }) => {
                                 : 'bg-white text-gray-800 border border-gray-200 rounded-bl-md'
                     )}
                 >
-                    {/* 拖拽手柄（仅手柄可拖拽，正文可选中） */}
-                    <div
-                        draggable
-                        onDragStart={handleDragStart}
-                        className="absolute -left-5 top-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing opacity-0 group-hover/msg:opacity-60 transition-opacity"
-                        title="拖拽到思维导图"
-                    >
-                        <GripVertical className="w-3.5 h-3.5 text-gray-300" />
-                    </div>
+                    {/* 拖拽视觉手柄 */}
+                    <GripVertical className="absolute -left-5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-300 opacity-0 group-hover/msg:opacity-60 transition-opacity cursor-grab" />
 
                     {/* 支架标记 */}
                     {metadata_info?.is_scaffold_used && metadata_info?.scaffold_info && (
