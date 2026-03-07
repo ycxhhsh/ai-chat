@@ -441,11 +441,38 @@ async def get_analytics(
         logger.warning("Active sessions query failed: %s", e)
         await db.rollback()
 
+    # 关联 session_id → 组名（session_id == group.id）
+    if active_sessions:
+        try:
+            from app.models.group import Group
+            session_ids = [s["session_id"] for s in active_sessions]
+            group_result = await db.execute(
+                select(Group.id, Group.name).where(Group.id.in_(session_ids))
+            )
+            group_map = {row.id: row.name for row in group_result}
+            for s in active_sessions:
+                s["group_name"] = group_map.get(s["session_id"], s["session_id"][:12] + "...")
+        except Exception as e:
+            logger.warning("Group name lookup failed: %s", e)
+            await db.rollback()
+            for s in active_sessions:
+                s["group_name"] = s["session_id"][:12] + "..."
+
     # 7. 参与度热力图（学生×日期）
-    participation_heatmap = await build_participation_heatmap(db)
+    participation_heatmap = []
+    try:
+        participation_heatmap = await build_participation_heatmap(db)
+    except Exception as e:
+        logger.warning("Participation heatmap wrapper failed: %s", e)
+        await db.rollback()
 
     # 8. 词云
-    word_cloud = await build_word_cloud(db)
+    word_cloud = []
+    try:
+        word_cloud = await build_word_cloud(db)
+    except Exception as e:
+        logger.warning("Word cloud wrapper failed: %s", e)
+        await db.rollback()
 
     return {
         "scaffold_usage": scaffold_heatmap,

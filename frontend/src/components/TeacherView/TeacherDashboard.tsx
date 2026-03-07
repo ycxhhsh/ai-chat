@@ -1007,7 +1007,7 @@ export const TeacherDashboard: React.FC = () => {
                                             <div className="space-y-2">
                                                 {analyticsData.active_sessions.map((s: Record<string, unknown>, i: number) => (
                                                     <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg text-sm">
-                                                        <span className="text-gray-700 font-mono text-xs">{(s.session_id as string)?.slice(0, 12)}...</span>
+                                                        <span className="text-gray-700 text-sm font-medium">{(s.group_name as string) || (s.session_id as string)?.slice(0, 12) + '...'}</span>
                                                         <span className="text-gray-500">{s.message_count as number} 条消息</span>
                                                         <span className="text-gray-400 text-xs">{s.last_activity as string}</span>
                                                     </div>
