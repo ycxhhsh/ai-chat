@@ -526,8 +526,8 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
 
     // 手动一键排版
     const handleAutoLayout = useCallback(() => {
-        const nonDraftNodes = mergedNodes.filter((n) => !n.id.startsWith('draft_'));
-        const nonDraftEdges = mergedEdges.filter((e) => !e.id.startsWith('draft_'));
+        const nonDraftNodes = mergedNodes.filter((n) => n.id && !n.id.startsWith('draft_'));
+        const nonDraftEdges = mergedEdges.filter((e) => e.id && !e.id.startsWith('draft_'));
         if (nonDraftNodes.length === 0) return;
         const { nodes: layouted } = getLayoutedElements(nonDraftNodes, nonDraftEdges, 'LR');
         const changes = layouted.map((n) => ({
