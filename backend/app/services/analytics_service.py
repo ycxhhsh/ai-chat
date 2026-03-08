@@ -110,3 +110,87 @@ BLOOM_PROMPT = """请对以下学生发言进行 Bloom 认知层次分类。
 请严格按 JSON 数组格式返回，每个元素对应一条发言的层次，例如：
 ["理解", "分析", "记忆", ...]
 """
+
+
+async def run_bloom_analysis(
+    db: AsyncSession,
+    llm_client,
+    limit: int = 50,
+) -> dict:
+    """LLM 驱动的 Bloom 认知层次分析。
+
+    Returns:
+        {"levels": {"记忆": 5, ...}, "total": N, "details": [...]}
+    """
+    import json as _json
+
+    # 1. 获取最近学生消息
+    result = await db.execute(
+        select(
+            Message.content,
+            jq(Message.sender, 'name').label("student_name"),
+        )
+        .where(jq(Message.sender, 'role') == "student")
+        .where(Message.content.isnot(None))
+        .where(Message.content != "")
+        .order_by(Message.created_at.desc())
+        .limit(limit)
+    )
+    rows = list(result)
+    if not rows:
+        return {"levels": {}, "total": 0, "details": [], "error": "暂无学生发言数据"}
+
+    # 2. 构建消息列表
+    messages_text = "\n".join(
+        f"{i + 1}. [{r.student_name}] {r[0][:100]}"
+        for i, r in enumerate(rows)
+    )
+
+    prompt = BLOOM_PROMPT.format(messages=messages_text)
+
+    # 3. 调用 LLM（收集完整流）
+    full_response = ""
+    try:
+        async for chunk in llm_client.stream_chat(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+        ):
+            full_response += chunk
+    except Exception as e:
+        logger.error("Bloom LLM call failed: %s", e)
+        return {"levels": {}, "total": len(rows), "details": [], "error": str(e)}
+
+    # 4. 解析 JSON 数组
+    try:
+        # 提取 JSON 部分（LLM 可能返回 markdown 包裹）
+        json_str = full_response.strip()
+        if "```" in json_str:
+            # 提取 code block 内容
+            start = json_str.find("[")
+            end = json_str.rfind("]") + 1
+            json_str = json_str[start:end]
+        levels_list: list[str] = _json.loads(json_str)
+    except Exception as e:
+        logger.warning("Bloom JSON parse failed: %s | raw: %s", e, full_response[:200])
+        return {"levels": {}, "total": len(rows), "details": [], "error": "LLM 返回格式异常"}
+
+    # 5. 统计
+    level_counts: dict[str, int] = {lv: 0 for lv in BLOOM_LEVELS}
+    details: list[dict] = []
+
+    for i, (row, level) in enumerate(zip(rows, levels_list)):
+        level = level.strip() if isinstance(level, str) else str(level)
+        if level in level_counts:
+            level_counts[level] += 1
+        details.append({
+            "content": row[0][:80],
+            "student": row.student_name,
+            "level": level,
+        })
+
+    return {
+        "levels": level_counts,
+        "total": len(rows),
+        "details": details[:20],
+    }
+

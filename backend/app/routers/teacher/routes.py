@@ -22,7 +22,9 @@ from app.db.json_utils import jq
 from app.services.analytics_service import (
     build_participation_heatmap,
     build_word_cloud,
+    run_bloom_analysis,
 )
+from app.llm.factory import get_llm_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/teacher", tags=["teacher"])
@@ -261,6 +263,21 @@ async def list_assignments(
 
 
 # ────────────────────── P1-5: 学习分析 ──────────────────────
+
+@router.post("/analytics/bloom")
+async def bloom_analysis(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _teacher: Annotated[User, Depends(require_teacher)],
+):
+    """LLM 驱动的 Bloom 认知层次分析。"""
+    try:
+        llm = get_llm_client("deepseek")
+        result = await run_bloom_analysis(db, llm)
+        return result
+    except Exception as e:
+        logger.error("Bloom analysis failed: %s", e)
+        return {"levels": {}, "total": 0, "details": [], "error": str(e)}
+
 
 @router.get("/analytics")
 async def get_analytics(

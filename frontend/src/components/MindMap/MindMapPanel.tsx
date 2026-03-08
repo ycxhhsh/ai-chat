@@ -519,7 +519,7 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
     const mergedEdges = useMemo(() => [...edges, ...draftEdges], [edges, draftEdges]);
 
     const nodeTypes = useMemo(() => ({ mindMapNode: MindMapCustomNode }), []);
-    const edgeTypes = useMemo(() => ({ default: MindMapCustomEdge, smoothstep: MindMapCustomEdge }), []);
+    const edgeTypes = useMemo(() => ({ default: MindMapCustomEdge }), []);
 
     // dagre 自动布局已移除 — 仅在用户点击"一键排版"时触发
     // 这样拖放建图和快捷连接不会导致画布跳动
@@ -534,6 +534,7 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
             type: 'position' as const,
             id: n.id,
             position: n.position,
+            dragging: false,
         }));
         onNodesChange(changes);
         // 排版完成后自适应视口（带动画）
@@ -809,7 +810,7 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
                     proOptions={{ hideAttribution: true }}
                     className="!bg-gray-50"
                     defaultEdgeOptions={{
-                        type: 'smoothstep',
+                        type: 'default',
                         animated: false,
                         style: { stroke: '#a78bfa', strokeWidth: 1.5 },
                         markerEnd: {

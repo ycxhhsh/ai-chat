@@ -80,7 +80,7 @@ function toFlowEdge(e: MindMapEdge): FlowEdge {
         source: e.source,
         target: e.target,
         label: e.label,
-        type: 'smoothstep',
+        type: 'default',
         animated: false,
         style: { stroke: '#a78bfa', strokeWidth: 1.5 },
         markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: '#a78bfa' },
