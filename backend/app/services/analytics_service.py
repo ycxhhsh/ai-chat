@@ -10,6 +10,7 @@ from sqlalchemy import func, select, cast, String as SAString
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.message import Message
+from app.db.json_utils import jq
 
 logger = logging.getLogger(__name__)
 
@@ -30,13 +31,6 @@ _STOP_WORDS = frozenset(
     "will would shall should may might can could to of in for on with".split()
 )
 
-# JSON 路径查询辅助
-def _jq(col, *keys):
-    """SQLAlchemy JSON 路径提取（兼容 PostgreSQL ->>）。"""
-    result = col
-    for k in keys:
-        result = result[k]
-    return result.as_string()
 
 
 async def build_participation_heatmap(db: AsyncSession) -> list[dict]:
@@ -44,15 +38,15 @@ async def build_participation_heatmap(db: AsyncSession) -> list[dict]:
     try:
         result = await db.execute(
             select(
-                _jq(Message.sender, 'name').label("student_name"),
-                _jq(Message.sender, 'id').label("student_id"),
+                jq(Message.sender, 'name').label("student_name"),
+                jq(Message.sender, 'id').label("student_id"),
                 cast(func.date(Message.created_at), SAString).label("date"),
                 func.count().label("count"),
             )
-            .where(_jq(Message.sender, 'role') == "student")
+            .where(jq(Message.sender, 'role') == "student")
             .group_by(
-                _jq(Message.sender, 'id'),
-                _jq(Message.sender, 'name'),
+                jq(Message.sender, 'id'),
+                jq(Message.sender, 'name'),
                 func.date(Message.created_at),
             )
             .order_by(func.date(Message.created_at))
@@ -76,7 +70,7 @@ async def build_word_cloud(db: AsyncSession, limit: int = 100) -> list[dict]:
     try:
         result = await db.execute(
             select(Message.content)
-            .where(_jq(Message.sender, 'role') == "student")
+            .where(jq(Message.sender, 'role') == "student")
             .order_by(Message.created_at.desc())
             .limit(2000)  # 最多取最近 2000 条
         )

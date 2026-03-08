@@ -134,6 +134,8 @@ export const TeacherDashboard: React.FC = () => {
 
     // P1-5 / P2-9: 学习分析
     const [analyticsData, setAnalyticsData] = useState<Record<string, any> | null>(null);
+    const [bloomData, setBloomData] = useState<Record<string, any> | null>(null);
+    const [bloomLoading, setBloomLoading] = useState(false);
     // P1-6: 知识库
     const [documents, setDocuments] = useState<Array<Record<string, unknown>>>([]);
     // P1-8: 作业
@@ -231,6 +233,20 @@ export const TeacherDashboard: React.FC = () => {
             console.error('Load analytics failed:', e);
         }
     }, []);
+
+    // Bloom 分析
+    const handleBloomAnalysis = async () => {
+        setBloomLoading(true);
+        try {
+            const data = await apiTyped.teacher.bloomAnalysis();
+            setBloomData(data);
+        } catch (e) {
+            alert('Bloom 分析失败，请稍后重试');
+            console.error('Bloom analysis failed:', e);
+        } finally {
+            setBloomLoading(false);
+        }
+    };
 
     // P1-6: 加载知识库文档
     const loadDocuments = useCallback(async () => {
@@ -1000,6 +1016,45 @@ export const TeacherDashboard: React.FC = () => {
                                         </div>
                                     )}
 
+                                    {/* 讨论深度 */}
+                                    {analyticsData.discussion_depth && analyticsData.discussion_depth.length > 0 && (
+                                        <div className="bg-white rounded-xl border border-gray-200 p-5">
+                                            <h3 className="text-sm font-semibold text-gray-900 mb-4">💬 讨论深度（平均消息长度）</h3>
+                                            <ResponsiveContainer width="100%" height={250}>
+                                                <BarChart data={analyticsData.discussion_depth}>
+                                                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                                    <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                                                    <YAxis tick={{ fontSize: 11 }} />
+                                                    <Tooltip formatter={(v: number | string | undefined) => [`${v} 字`, '平均长度']} />
+                                                    <Bar dataKey="avg_length" fill="#10b981" radius={[4, 4, 0, 0]} name="平均字数" />
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    )}
+
+                                    {/* 支架依赖度 */}
+                                    {analyticsData.scaffold_dependency && analyticsData.scaffold_dependency.total > 0 && (
+                                        <div className="bg-white rounded-xl border border-gray-200 p-5">
+                                            <h3 className="text-sm font-semibold text-gray-900 mb-3">🔧 支架依赖度</h3>
+                                            <div className="flex items-center gap-4">
+                                                <div className="flex-1">
+                                                    <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                                                        <div
+                                                            className="h-full bg-gradient-to-r from-indigo-500 to-violet-500 rounded-full transition-all"
+                                                            style={{ width: `${analyticsData.scaffold_dependency.rate}%` }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <span className="text-sm font-semibold text-gray-700 whitespace-nowrap">
+                                                    {analyticsData.scaffold_dependency.rate}%
+                                                </span>
+                                            </div>
+                                            <p className="text-xs text-gray-400 mt-2">
+                                                {analyticsData.scaffold_dependency.scaffold_used} / {analyticsData.scaffold_dependency.total} 条学生消息使用了支架辅助
+                                            </p>
+                                        </div>
+                                    )}
+
                                     {/* 活跃会话 */}
                                     {analyticsData.active_sessions && analyticsData.active_sessions.length > 0 && (
                                         <div className="bg-white rounded-xl border border-gray-200 p-5">
@@ -1015,10 +1070,11 @@ export const TeacherDashboard: React.FC = () => {
                                             </div>
                                         </div>
                                     )}
+
                                     {/* 参与度热力图 */}
                                     {analyticsData.participation_heatmap && analyticsData.participation_heatmap.length > 0 && (() => {
                                         const hm = analyticsData.participation_heatmap as { student_name: string; date: string; count: number }[];
-                                        const students = [...new Set(hm.map(d => d.student_name))];
+                                        const hmStudents = [...new Set(hm.map(d => d.student_name))];
                                         const dates = [...new Set(hm.map(d => d.date))].sort();
                                         const maxCount = Math.max(...hm.map(d => d.count), 1);
                                         const lookup = new Map(hm.map(d => [`${d.student_name}-${d.date}`, d.count]));
@@ -1029,9 +1085,9 @@ export const TeacherDashboard: React.FC = () => {
                                                     <div className="inline-grid gap-[2px]" style={{ gridTemplateColumns: `100px repeat(${dates.length}, 28px)` }}>
                                                         <div className="text-[9px] text-gray-400" />
                                                         {dates.map(d => <div key={d} className="text-[8px] text-gray-400 text-center rotate-[-45deg] origin-bottom-left h-6">{d.slice(5)}</div>)}
-                                                        {students.map(s => (
-                                                            <>
-                                                                <div key={`n-${s}`} className="text-[10px] text-gray-600 truncate pr-1 flex items-center">{s}</div>
+                                                        {hmStudents.map(s => (
+                                                            <React.Fragment key={`row-${s}`}>
+                                                                <div className="text-[10px] text-gray-600 truncate pr-1 flex items-center">{s}</div>
                                                                 {dates.map(d => {
                                                                     const v = lookup.get(`${s}-${d}`) || 0;
                                                                     const intensity = v / maxCount;
@@ -1044,7 +1100,7 @@ export const TeacherDashboard: React.FC = () => {
                                                                         />
                                                                     );
                                                                 })}
-                                                            </>
+                                                            </React.Fragment>
                                                         ))}
                                                     </div>
                                                 </div>
@@ -1059,42 +1115,127 @@ export const TeacherDashboard: React.FC = () => {
                                         );
                                     })()}
 
-                                    {/* 词云 */}
+                                    {/* 词云 (SVG 增强布局) */}
                                     {analyticsData.word_cloud && analyticsData.word_cloud.length > 0 && (() => {
                                         const words = analyticsData.word_cloud as { word: string; count: number }[];
                                         const top50 = words.slice(0, 50);
                                         const maxC = Math.max(...top50.map(w => w.count), 1);
                                         const colors = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#14b8a6'];
+                                        // 螺旋布局：每个词按螺旋角度分布
+                                        const cx = 300, cy = 150;
                                         return (
                                             <div className="bg-white rounded-xl border border-gray-200 p-4">
                                                 <h3 className="text-sm font-semibold text-gray-900 mb-3">☁️ 高频词云</h3>
-                                                <div className="flex flex-wrap gap-2 justify-center py-4">
+                                                <svg viewBox="0 0 600 300" className="w-full" style={{ maxHeight: 300 }}>
                                                     {top50.map((w, i) => {
                                                         const ratio = w.count / maxC;
-                                                        const size = 12 + ratio * 24;
+                                                        const size = 12 + ratio * 22;
+                                                        // 螺旋坐标
+                                                        const angle = i * 137.508 * (Math.PI / 180); // 黄金角
+                                                        const r = 20 + i * 3.5;
+                                                        const x = cx + r * Math.cos(angle);
+                                                        const y = cy + r * Math.sin(angle) * 0.6;
+                                                        const rotation = i % 5 === 0 ? -90 : i % 7 === 0 ? 90 : 0;
                                                         return (
-                                                            <span
+                                                            <text
                                                                 key={w.word}
-                                                                className="inline-block transition-transform hover:scale-110 cursor-default"
-                                                                style={{
-                                                                    fontSize: `${size}px`,
-                                                                    fontWeight: ratio > 0.5 ? 700 : 400,
-                                                                    color: colors[i % colors.length],
-                                                                    opacity: 0.6 + ratio * 0.4,
-                                                                }}
-                                                                title={`${w.word}: ${w.count} 次`}
+                                                                x={x}
+                                                                y={y}
+                                                                textAnchor="middle"
+                                                                dominantBaseline="central"
+                                                                fontSize={size}
+                                                                fontWeight={ratio > 0.5 ? 700 : 400}
+                                                                fill={colors[i % colors.length]}
+                                                                opacity={0.6 + ratio * 0.4}
+                                                                transform={rotation ? `rotate(${rotation}, ${x}, ${y})` : undefined}
+                                                                className="transition-all hover:opacity-100 cursor-default"
                                                             >
+                                                                <title>{`${w.word}: ${w.count} 次`}</title>
                                                                 {w.word}
-                                                            </span>
+                                                            </text>
                                                         );
                                                     })}
-                                                </div>
+                                                </svg>
                                             </div>
                                         );
                                     })()}
 
+                                    {/* 🧠 Bloom 认知层次分析 */}
+                                    <div className="bg-white rounded-xl border border-gray-200 p-5">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <h3 className="text-sm font-semibold text-gray-900">🧠 Bloom 认知层次分析</h3>
+                                            <button
+                                                onClick={handleBloomAnalysis}
+                                                disabled={bloomLoading}
+                                                className="flex items-center gap-1.5 px-4 py-2 text-xs text-white bg-violet-600 rounded-lg hover:bg-violet-700 disabled:opacity-50 transition-colors"
+                                            >
+                                                {bloomLoading ? (
+                                                    <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> 分析中...</>
+                                                ) : (
+                                                    <><TrendingUp className="w-3.5 h-3.5" /> 开始分析</>
+                                                )}
+                                            </button>
+                                        </div>
+                                        <p className="text-xs text-gray-400 mb-4">
+                                            基于 LLM 对最近学生发言进行 Bloom 认知层次分类（记忆→创造）
+                                        </p>
+
+                                        {bloomData && !bloomData.error ? (
+                                            <div className="space-y-4">
+                                                <ResponsiveContainer width="100%" height={280}>
+                                                    <BarChart
+                                                        data={Object.entries(bloomData.levels || {}).map(([name, value]) => ({ name, value }))}
+                                                        layout="vertical"
+                                                    >
+                                                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                                        <XAxis type="number" tick={{ fontSize: 11 }} />
+                                                        <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={50} />
+                                                        <Tooltip />
+                                                        <Bar dataKey="value" radius={[0, 4, 4, 0]} name="发言数">
+                                                            {Object.entries(bloomData.levels || {}).map((_: unknown, idx: number) => {
+                                                                const bloomColors = ['#94a3b8', '#60a5fa', '#34d399', '#fbbf24', '#f87171', '#a78bfa'];
+                                                                return <Cell key={idx} fill={bloomColors[idx % bloomColors.length]} />;
+                                                            })}
+                                                        </Bar>
+                                                    </BarChart>
+                                                </ResponsiveContainer>
+                                                <p className="text-xs text-gray-400 text-right">共分析 {bloomData.total} 条发言</p>
+
+                                                {bloomData.details && bloomData.details.length > 0 && (
+                                                    <div>
+                                                        <h4 className="text-xs font-medium text-gray-600 mb-2">部分发言分类详情</h4>
+                                                        <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                                            {bloomData.details.slice(0, 15).map((d: { content: string; level: string }, i: number) => (
+                                                                <div key={i} className="flex items-start gap-2 text-xs">
+                                                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 ${d.level === '创造' ? 'bg-violet-100 text-violet-700' :
+                                                                        d.level === '评价' ? 'bg-red-100 text-red-700' :
+                                                                            d.level === '分析' ? 'bg-amber-100 text-amber-700' :
+                                                                                d.level === '应用' ? 'bg-emerald-100 text-emerald-700' :
+                                                                                    d.level === '理解' ? 'bg-blue-100 text-blue-700' :
+                                                                                        'bg-gray-100 text-gray-600'
+                                                                        }`}>{d.level}</span>
+                                                                    <span className="text-gray-500 line-clamp-1">{d.content}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ) : bloomData?.error ? (
+                                            <div className="text-center py-4 text-red-400 text-sm">分析失败: {bloomData.error}</div>
+                                        ) : !bloomLoading ? (
+                                            <div className="text-center py-6 text-gray-300 text-sm">点击「开始分析」按钮触发 AI 分析</div>
+                                        ) : (
+                                            <div className="space-y-3 py-4">
+                                                {[1, 2, 3, 4].map(i => (
+                                                    <div key={i} className="h-6 bg-gray-100 rounded animate-pulse" style={{ width: `${60 + i * 10}%` }} />
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+
                                     {/* 非空但无任何子数据 */}
-                                    {!analyticsData.participation_trend?.length && !analyticsData.ai_intervention_rate?.length && !analyticsData.scaffold_usage?.length && !analyticsData.participation_heatmap?.length && !analyticsData.word_cloud?.length && (
+                                    {!analyticsData.participation_trend?.length && !analyticsData.ai_intervention_rate?.length && !analyticsData.scaffold_usage?.length && !analyticsData.participation_heatmap?.length && !analyticsData.word_cloud?.length && !analyticsData.discussion_depth?.length && (
                                         <div className="text-center py-12 text-gray-400 text-sm">暂无足够数据生成分析图表</div>
                                     )}
                                 </div>

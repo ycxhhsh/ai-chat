@@ -18,6 +18,7 @@ from app.models.user import User
 from app.models.group import Group, GroupMember
 from app.models.assignment import Assignment
 from app.models.ai_conversation import AiConversation
+from app.db.json_utils import jq
 from app.services.analytics_service import (
     build_participation_heatmap,
     build_word_cloud,
@@ -26,18 +27,6 @@ from app.services.analytics_service import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/teacher", tags=["teacher"])
 
-
-# PostgreSQL JSON 提取辅助函数
-def _jq(column, *keys):
-    """从 JSON 列提取文本值（PostgreSQL 兼容）。
-
-    _jq(Message.sender, 'id') => sender->>'id'
-    _jq(Message.metadata_info, 'scaffold_info', 'name') => metadata_info->'scaffold_info'->>'name'
-    """
-    col = column
-    for key in keys[:-1]:
-        col = col.op("->")(key)  # -> operator (returns JSON)
-    return col.op("->>")((keys[-1]))  # ->> operator (returns text)
 
 
 
@@ -120,7 +109,7 @@ async def list_messages(
     if session_id:
         q = q.where(Message.session_id == session_id)
     if user_id:
-        q = q.where(_jq(Message.sender, 'id') == user_id)
+        q = q.where(jq(Message.sender, 'id') == user_id)
 
     result = await db.execute(q.offset(offset).limit(page_size))
     messages = result.scalars().all()
@@ -129,7 +118,7 @@ async def list_messages(
     if session_id:
         count_q = count_q.where(Message.session_id == session_id)
     if user_id:
-        count_q = count_q.where(_jq(Message.sender, 'id') == user_id)
+        count_q = count_q.where(jq(Message.sender, 'id') == user_id)
     total = (await db.execute(count_q)).scalar() or 0
 
     return {
@@ -174,7 +163,7 @@ async def get_stats(
     ai_message_count = (
         await db.execute(
             select(func.count()).where(
-                _jq(Message.sender, 'role') == "ai"
+                jq(Message.sender, 'role') == "ai"
             )
         )
     ).scalar() or 0
@@ -187,7 +176,7 @@ async def get_stats(
     scaffold_usage_count = (
         await db.execute(
             select(func.count()).where(
-                _jq(Message.metadata_info, 'is_scaffold_used') == 'true'  # noqa
+                jq(Message.metadata_info, 'is_scaffold_used') == 'true'  # noqa
             )
         )
     ).scalar() or 0
@@ -285,13 +274,13 @@ async def get_analytics(
     try:
         result = await db.execute(
             select(
-                _jq(Message.metadata_info, 'scaffold_info', 'name').label("scaffold_name"),
+                jq(Message.metadata_info, 'scaffold_info', 'name').label("scaffold_name"),
                 func.count().label("usage_count"),
             )
             .where(
-                _jq(Message.metadata_info, 'is_scaffold_used') == 'true'  # noqa
+                jq(Message.metadata_info, 'is_scaffold_used') == 'true'  # noqa
             )
-            .group_by(_jq(Message.metadata_info, 'scaffold_info', 'name'))
+            .group_by(jq(Message.metadata_info, 'scaffold_info', 'name'))
         )
         scaffold_heatmap = [
             {"scaffold_name": row.scaffold_name, "count": row.usage_count}
@@ -307,12 +296,12 @@ async def get_analytics(
         # 获取每个学生的总发送消息数
         student_msgs = await db.execute(
             select(
-                _jq(Message.sender, 'id').label("uid"),
-                _jq(Message.sender, 'name').label("uname"),
+                jq(Message.sender, 'id').label("uid"),
+                jq(Message.sender, 'name').label("uname"),
                 func.count().label("total"),
             )
-            .where(_jq(Message.sender, 'role') == "student")
-            .group_by(_jq(Message.sender, 'id'))
+            .where(jq(Message.sender, 'role') == "student")
+            .group_by(jq(Message.sender, 'id'))
         )
         student_msg_data = {row.uid: {"name": row.uname, "total": row.total} for row in student_msgs}
 
@@ -323,7 +312,7 @@ async def get_analytics(
                 func.count().label("ai_count"),
             )
             .where(
-                _jq(Message.sender, 'role') == "ai",
+                jq(Message.sender, 'role') == "ai",
                 Message.recipient_id.is_not(None),
             )
             .group_by(Message.recipient_id)
@@ -371,12 +360,12 @@ async def get_analytics(
     try:
         result = await db.execute(
             select(
-                _jq(Message.sender, 'name').label("name"),
+                jq(Message.sender, 'name').label("name"),
                 func.avg(func.length(Message.content)).label("avg_length"),
                 func.count().label("msg_count"),
             )
-            .where(_jq(Message.sender, 'role') == "student")
-            .group_by(_jq(Message.sender, 'id'))
+            .where(jq(Message.sender, 'role') == "student")
+            .group_by(jq(Message.sender, 'id'))
             .order_by(func.avg(func.length(Message.content)).desc())
         )
         discussion_depth = [
@@ -393,7 +382,7 @@ async def get_analytics(
         total_student_msgs = (
             await db.execute(
                 select(func.count()).where(
-                    _jq(Message.sender, 'role') == "student"
+                    jq(Message.sender, 'role') == "student"
                 )
             )
         ).scalar() or 0
@@ -401,8 +390,8 @@ async def get_analytics(
         scaffold_used_msgs = (
             await db.execute(
                 select(func.count()).where(
-                    _jq(Message.sender, 'role') == "student",
-                    _jq(Message.metadata_info, 'is_scaffold_used') == 'true',
+                    jq(Message.sender, 'role') == "student",
+                    jq(Message.metadata_info, 'is_scaffold_used') == 'true',
                 )
             )
         ).scalar() or 0
@@ -735,7 +724,7 @@ async def list_unified_messages(
     # 学生筛选
     if student_id:
         q = q.where(
-            (_jq(Message.sender, "id") == student_id)
+            (jq(Message.sender, "id") == student_id)
             | (Message.recipient_id == student_id)
         )
 

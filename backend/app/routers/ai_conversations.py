@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -200,6 +200,7 @@ async def summarize_conversation(
     conversation_id: str,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    background_tasks: BackgroundTasks,
 ):
     """为指定对话生成一句话摘要（跨窗口记忆用）。
 
@@ -216,16 +217,13 @@ async def summarize_conversation(
     if not convo.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    import asyncio
     from app.services.summary_service import generate_conversation_summary
 
-    # 异步执行，不阻塞返回
-    asyncio.create_task(
-        generate_conversation_summary(
-            conversation_id=conversation_id,
-            user_id=str(user.user_id),
-            db=db,
-        )
+    # 使用 BackgroundTasks 代替 asyncio.create_task，避免 event loop 关闭后仍执行
+    background_tasks.add_task(
+        generate_conversation_summary,
+        conversation_id=conversation_id,
+        user_id=str(user.user_id),
     )
     return {"ok": True, "message": "摘要生成已排队"}
 

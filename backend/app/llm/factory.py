@@ -98,6 +98,7 @@ def get_llm_client(
             base_url=cfg["base_url"],
             default_model=cfg["model"],
             timeout=effective_timeout,
+            breaker_name=provider_name,
         )
 
     return _client_cache[cache_key]

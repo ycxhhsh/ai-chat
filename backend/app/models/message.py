@@ -5,7 +5,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import DateTime, String, Text, JSON
+from sqlalchemy import DateTime, Index, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -13,6 +14,18 @@ from app.models.base import Base
 
 class Message(Base):
     __tablename__ = "messages"
+    __table_args__ = (
+        Index(
+            "ix_messages_sender_gin", "sender",
+            postgresql_using="gin",
+            postgresql_ops={"sender": "jsonb_path_ops"},
+        ),
+        Index(
+            "ix_messages_metadata_gin", "metadata_info",
+            postgresql_using="gin",
+            postgresql_ops={"metadata_info": "jsonb_path_ops"},
+        ),
+    )
 
     message_id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
@@ -28,11 +41,11 @@ class Message(Base):
     conversation_id: Mapped[Optional[str]] = mapped_column(
         String(36), index=True, nullable=True
     )
-    sender: Mapped[dict] = mapped_column(JSON, nullable=False)
+    sender: Mapped[dict] = mapped_column(JSONB, nullable=False)
     content: Mapped[str] = mapped_column(String, nullable=False)
-    timing: Mapped[dict] = mapped_column(JSON, nullable=False)
+    timing: Mapped[dict] = mapped_column(JSONB, nullable=False)
     metadata_info: Mapped[dict] = mapped_column(
-        JSON, nullable=False, default=dict
+        JSONB, nullable=False, default=dict
     )
     # embedding 暂存为 JSON 纯文本（SQLite 无 pgvector）
     embedding: Mapped[Optional[str]] = mapped_column(

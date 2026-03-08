@@ -133,6 +133,10 @@ export const api = {
             const res = await http.get('/teacher/analytics');
             return res.data;
         },
+        bloomAnalysis: async () => {
+            const res = await http.post('/teacher/analytics/bloom');
+            return res.data;
+        },
         exportCsv: async (sessionId?: string) => {
             const params: Record<string, string> = {};
             if (sessionId) params.session_id = sessionId;

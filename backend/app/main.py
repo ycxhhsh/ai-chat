@@ -59,6 +59,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        from app.websockets.manager import manager
+        await manager.shutdown()
         await redis_client.close()
         await engine.dispose()
 

@@ -54,7 +54,7 @@ async def _generate_mindmap(
     auto_trigger: bool = False,
     map_key: str = "",
 ) -> None:
-    """从对话中提取思维导图。
+    """从对话中提取思维导图（Tool Calling 操作指令模式）。
 
     Args:
         auto_trigger: 若为 True，表示由 AI 回复自动触发，会做防抖检查。
@@ -105,7 +105,8 @@ async def _generate_mindmap(
 
         # 查找已有思维导图（用于增量更新）
         effective_key = map_key or f"session:{session_id}"
-        existing_context = ""
+        existing_nodes: list[dict] = []
+        existing_edges: list[dict] = []
         async with AsyncSessionLocal() as db:
             result = await db.execute(
                 select(MindMap)
@@ -115,11 +116,8 @@ async def _generate_mindmap(
             )
             existing_map = result.scalar_one_or_none()
             if existing_map and existing_map.nodes:
-                existing_context = (
-                    "\n\n以下是当前已有的思维导图数据，请在此基础上增量更新"
-                    "（保留仍然相关的节点，添加新概念，移除不再相关的节点）：\n"
-                    f"{json.dumps({'nodes': existing_map.nodes, 'edges': existing_map.edges}, ensure_ascii=False)}"
-                )
+                existing_nodes = list(existing_map.nodes)
+                existing_edges = list(existing_map.edges)
 
         # 构建对话文本（注入 message_id 以便 AI 节点溯源）
         conversation_text = "\n".join(
@@ -127,7 +125,16 @@ async def _generate_mindmap(
             for m in reversed(messages)
         )
 
-        # 调用 LLM 提取
+        # 构建增量上下文
+        existing_context = ""
+        if existing_nodes:
+            existing_ids = [n.get("id", "") for n in existing_nodes]
+            existing_context = (
+                "\n\n当前已有节点 ID: " + ", ".join(existing_ids)
+                + "\n请在此基础上增量更新（可用 update_node 修改已有节点，或 add_node 添加新节点）。"
+            )
+
+        # 调用 LLM 提取操作指令
         client = get_llm_client("deepseek")
         llm_messages = [
             {"role": "system", "content": MINDMAP_EXTRACTION_PROMPT},
@@ -138,18 +145,10 @@ async def _generate_mindmap(
         async for chunk in client.stream_chat(messages=llm_messages, temperature=0.3):
             full_response += chunk
 
-        # 解析 JSON
-        try:
-            # 尝试提取 JSON 块
-            if "```" in full_response:
-                json_str = full_response.split("```")[1]
-                if json_str.startswith("json"):
-                    json_str = json_str[4:]
-                mindmap_data = json.loads(json_str.strip())
-            else:
-                mindmap_data = json.loads(full_response.strip())
-        except json.JSONDecodeError:
-            logger.error("Failed to parse mindmap JSON: %s", full_response[:200])
+        # 多层 JSON 解析容错
+        operations = _parse_operations_json(full_response)
+        if operations is None:
+            logger.error("Failed to parse mindmap operations: %s", full_response[:300])
             await manager.broadcast(
                 session_id,
                 "ERROR",
@@ -162,8 +161,8 @@ async def _generate_mindmap(
             )
             return
 
-        nodes = mindmap_data.get("nodes", [])
-        edges = mindmap_data.get("edges", [])
+        # 将操作指令应用到已有节点/边
+        nodes, edges = _apply_operations(operations, existing_nodes, existing_edges)
 
         # 为节点添加布局位置
         for i, node in enumerate(nodes):
@@ -204,6 +203,143 @@ async def _generate_mindmap(
             "MINDMAP_GENERATING",
             {"is_generating": False},
         )
+
+
+def _parse_operations_json(raw: str) -> list[dict] | None:
+    """多层容错解析 LLM 返回的操作指令 JSON。
+
+    尝试顺序：
+    1. 直接 json.loads（最理想情况）
+    2. 提取 ```json...``` 代码块
+    3. 正则匹配最外层 [...] 数组
+    4. 尝试匹配 {nodes, edges} 旧格式并转换
+    """
+    import re
+
+    raw = raw.strip()
+
+    # 1. 直接解析
+    try:
+        result = json.loads(raw)
+        if isinstance(result, list):
+            return result
+        # 兼容旧格式 {nodes, edges}
+        if isinstance(result, dict) and "nodes" in result:
+            return _convert_legacy_format(result)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. 提取 markdown 代码块
+    if "```" in raw:
+        try:
+            parts = raw.split("```")
+            for part in parts[1::2]:  # 奇数索引为代码块内容
+                cleaned = part.strip()
+                if cleaned.startswith("json"):
+                    cleaned = cleaned[4:].strip()
+                result = json.loads(cleaned)
+                if isinstance(result, list):
+                    return result
+                if isinstance(result, dict) and "nodes" in result:
+                    return _convert_legacy_format(result)
+        except (json.JSONDecodeError, IndexError):
+            pass
+
+    # 3. 正则匹配最外层 [...]
+    match = re.search(r'\[[\s\S]*\]', raw)
+    if match:
+        try:
+            result = json.loads(match.group())
+            if isinstance(result, list):
+                return result
+        except json.JSONDecodeError:
+            pass
+
+    # 4. 正则匹配 {...}（旧格式兜底）
+    match = re.search(r'\{[\s\S]*\}', raw)
+    if match:
+        try:
+            result = json.loads(match.group())
+            if isinstance(result, dict) and "nodes" in result:
+                return _convert_legacy_format(result)
+        except json.JSONDecodeError:
+            pass
+
+    return None
+
+
+def _convert_legacy_format(data: dict) -> list[dict]:
+    """将旧的 {nodes, edges} 格式转换为操作指令数组。"""
+    ops: list[dict] = []
+    for node in data.get("nodes", []):
+        ops.append({
+            "op": "add_node",
+            "id": node.get("id", f"n{len(ops)}"),
+            "label": node.get("label", ""),
+            "type": node.get("type", "concept"),
+            "source_message_ids": node.get("source_message_ids", []),
+        })
+    for edge in data.get("edges", []):
+        ops.append({
+            "op": "add_edge",
+            "source": edge.get("source", ""),
+            "target": edge.get("target", ""),
+            "label": edge.get("label", ""),
+        })
+    return ops
+
+
+def _apply_operations(
+    operations: list[dict],
+    existing_nodes: list[dict],
+    existing_edges: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    """将操作指令应用到已有节点和边上。"""
+    nodes = list(existing_nodes)
+    edges = list(existing_edges)
+    node_ids = {n.get("id") for n in nodes}
+
+    for op in operations:
+        op_type = op.get("op", "")
+
+        if op_type == "add_node":
+            node_id = op.get("id", "")
+            if node_id and node_id not in node_ids:
+                nodes.append({
+                    "id": node_id,
+                    "label": op.get("label", ""),
+                    "type": op.get("type", "concept"),
+                    "source_message_ids": op.get("source_message_ids", []),
+                })
+                node_ids.add(node_id)
+
+        elif op_type == "update_node":
+            node_id = op.get("id", "")
+            for n in nodes:
+                if n.get("id") == node_id:
+                    if "label" in op:
+                        n["label"] = op["label"]
+                    break
+
+        elif op_type == "add_edge":
+            src = op.get("source", "")
+            tgt = op.get("target", "")
+            label = op.get("label", "")
+            if src and tgt:
+                # 避免重复边
+                exists = any(
+                    e.get("source") == src and e.get("target") == tgt
+                    for e in edges
+                )
+                if not exists:
+                    edges.append({
+                        "id": f"e_{src}_{tgt}",
+                        "source": src,
+                        "target": tgt,
+                        "label": label,
+                    })
+
+    return nodes, edges
 
 
 async def handle_mindmap_edit(

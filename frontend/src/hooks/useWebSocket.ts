@@ -30,6 +30,9 @@ export function useWebSocket(sessionId: string | null) {
     const heartbeatTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const reconnectAttemptRef = useRef(0);
     const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // 游标：记录最后收到消息的时间戳，重连时只拉取增量
+    const lastMsgTimestampRef = useRef<string | null>(null);
+    const isReconnectRef = useRef(false);
     const { token } = useAuthStore();
 
     const {
@@ -96,7 +99,7 @@ export function useWebSocket(sessionId: string | null) {
                 if (data.scaffolds && Array.isArray(data.scaffolds)) {
                     setScaffolds(data.scaffolds as Array<{ scaffold_id: string; display_name: string; prompt_template: string; is_active: boolean; sort_order: number }>);
                 }
-                // P0-2: 初始化历史消息 — 始终替换，确保切换小组后消息正确
+                // P0-2: 消息处理 — 区分首次连接和重连
                 if (data.recent_messages && Array.isArray(data.recent_messages)) {
                     const msgs = data.recent_messages as ChatMessage[];
                     const groupMsgs: ChatMessage[] = [];
@@ -111,14 +114,31 @@ export function useWebSocket(sessionId: string | null) {
                             groupMsgs.push({ ...msg, status: 'sent' });
                         }
                     }
-                    // 始终设置，即使为空 — 确保旧消息被清除
-                    setGroupMessages(groupMsgs);
-                    setAiMessages(aiMsgs);
+                    if (isReconnectRef.current && msgs.length > 0) {
+                        // 重连：增量追加（游标之后的新消息）
+                        for (const m of groupMsgs) addGroupMessage(m);
+                        for (const m of aiMsgs) addAiMessage(m);
+                    } else {
+                        // 首次连接：全量替换
+                        setGroupMessages(groupMsgs);
+                        setAiMessages(aiMsgs);
+                    }
+                    // 更新游标到最后一条消息的时间
+                    if (msgs.length > 0) {
+                        const lastMsg = msgs[msgs.length - 1];
+                        if (lastMsg.created_at) {
+                            lastMsgTimestampRef.current = lastMsg.created_at;
+                        }
+                    }
                 }
                 break;
 
             case 'CHAT_MESSAGE': {
                 const msg = data as unknown as ChatMessage;
+                // 更新游标
+                if (msg.created_at) {
+                    lastMsgTimestampRef.current = msg.created_at;
+                }
                 const isAiPrivate =
                     (msg.sender?.role === 'ai' && msg.recipient_id) ||
                     msg.recipient_id === 'ai';
@@ -263,7 +283,14 @@ export function useWebSocket(sessionId: string | null) {
         if (!sessionId || !token || wsRef.current) return;
 
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const url = `${protocol}//${window.location.host}/ws/${sessionId}?token=${token}`;
+        let url = `${protocol}//${window.location.host}/ws/${sessionId}?token=${token}`;
+        // 重连时附加游标，后端只返回游标之后的增量消息
+        if (lastMsgTimestampRef.current) {
+            url += `&cursor=${encodeURIComponent(lastMsgTimestampRef.current)}`;
+            isReconnectRef.current = true;
+        } else {
+            isReconnectRef.current = false;
+        }
         const ws = new WebSocket(url);
 
         ws.onopen = () => {

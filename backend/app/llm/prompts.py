@@ -123,44 +123,37 @@ FALLACY_DETECTION_PROMPT = """
 """
 
 
-# ── 6. 思维导图提取（新增） ──
+# ── 6. 思维导图提取（Tool Calling 操作指令） ──
 MINDMAP_EXTRACTION_PROMPT = """
-你是一个知识结构分析专家。请仔细阅读以下对话内容，从中提取核心概念和它们之间的关系。
+你是知识结构分析专家。阅读对话内容，输出一组操作指令来构建/更新思维导图。
 
-注意：对话中每条消息前都有 `[MsgID:xxx]` 标记，这是消息的唯一标识符。
+# 可用操作
 
-结构要求：
-1. 先提取 1-2 个"主题节点"作为顶层框架，再向下拆分
-2. 每个概念必须精炼到一个高层抽象，不要把具体举例单独建节点
-3. 优先保留上层抽象概念，合并零碎内容
-4. 节点标签精炼为 2-6 字
-5. **节点数量硬限制**：核心节点（concept/argument/evidence/question）总数不超过 5 个，suggestion 节点不超过 2 个。宁少勿碎，不得超出此限制
-6. 如果对话内容较少（少于 10 条消息），核心节点控制在 3 个以内
+1. add_node(id, label, type, source_message_ids) — 添加新节点
+2. update_node(id, label) — 修改已有节点标签（仅增量更新时使用）
+3. add_edge(source, target, label) — 添加节点间关系
 
-内容要求：
-1. 提取对话中讨论的**核心概念**作为节点（node）
-2. 提取概念之间的**逻辑关系**作为边（edge）
-3. 关系类型包括但不限于：包含、导致、对比、支持、反对、举例
-4. 每条边需要标注关系类型
-5. **溯源要求**：每个节点必须包含 `source_message_ids` 字段（数组），值为启发该节点的 2-3 条最相关消息的 MsgID（即对话中 `[MsgID:xxx]` 的 xxx 部分）。
-6. **重要**：在已有节点之外，额外生成 1-3 个 type 为 `suggestion` 的"待探索"节点，标出对话中尚未覆盖但逻辑上应该探索的方向。这些建议节点的 label 应以"？"结尾（如"备考策略？"），且 `source_message_ids` 设为最相关消息的 ID 数组。
+# 约束
 
-请严格按以下 JSON 格式输出，不要包含 Markdown 格式标记：
-{
-    "nodes": [
-        {"id": "n1", "label": "批判性思维", "type": "concept", "source_message_ids": ["msg-uuid-1", "msg-uuid-3"]},
-        {"id": "n2", "label": "逻辑推理", "type": "concept", "source_message_ids": ["msg-uuid-2"]},
-        {"id": "n3", "label": "证据评估", "type": "argument", "source_message_ids": ["msg-uuid-1", "msg-uuid-2"]},
-        {"id": "s1", "label": "实际应用？", "type": "suggestion", "source_message_ids": ["msg-uuid-3"]}
-    ],
-    "edges": [
-        {"source": "n1", "target": "n2", "label": "包含"},
-        {"source": "n1", "target": "n3", "label": "需要"},
-        {"source": "n1", "target": "s1", "label": "待探索"}
-    ]
-}
+- 节点 id 格式：概念用 n1/n2/...，建议用 s1/s2/...
+- 节点 type 可选：concept（概念）| argument（论点）| evidence（论据）| question（问题）| suggestion（待探索）
+- suggestion 节点的 label 以"？"结尾（如"实际应用？"）
+- 核心节点（concept/argument/evidence/question）总数 ≤ 5，suggestion ≤ 2
+- 节点标签精炼 2-6 字
+- 每个节点的 source_message_ids 取 2-3 条最相关消息的 MsgID
+- 边的 label 用 2-4 字描述关系（包含、导致、对比、支持、反对、举例、待探索等）
+- 先建节点再建边
 
-节点 type 可选：concept（概念）、argument（论点）、evidence（论据）、question（问题）、suggestion（待探索建议）
+# 输出格式
+
+严格输出 JSON 数组，不要包含 Markdown 格式标记或任何说明文字：
+[
+  {"op": "add_node", "id": "n1", "label": "批判性思维", "type": "concept", "source_message_ids": ["msg-1", "msg-3"]},
+  {"op": "add_node", "id": "n2", "label": "逻辑推理", "type": "concept", "source_message_ids": ["msg-2"]},
+  {"op": "add_node", "id": "s1", "label": "实际应用？", "type": "suggestion", "source_message_ids": ["msg-3"]},
+  {"op": "add_edge", "source": "n1", "target": "n2", "label": "包含"},
+  {"op": "add_edge", "source": "n1", "target": "s1", "label": "待探索"}
+]
 """
 
 # ── 7. 作业自动评分 ──

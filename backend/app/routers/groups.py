@@ -42,16 +42,17 @@ async def create_group(
     user: Annotated[User, Depends(get_current_user)],
 ):
     invite_code = uuid.uuid4().hex[:8].upper()
+    group_id = f"group_{uuid.uuid4().hex[:8]}"
     group = Group(
+        id=group_id,
         name=body.name,
         invite_code=invite_code,
         created_by=str(user.user_id),
     )
     db.add(group)
-    await db.flush()  # 让 default lambda 生成 group.id
 
     member = GroupMember(
-        group_id=group.id,
+        group_id=group_id,
         user_id=str(user.user_id),
         role="admin",
     )

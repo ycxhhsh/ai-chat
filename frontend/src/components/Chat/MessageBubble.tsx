@@ -15,7 +15,7 @@ interface Props {
     isOwn: boolean;
 }
 
-export const MessageBubble: React.FC<Props> = ({ message, isOwn }) => {
+export const MessageBubble: React.FC<Props> = React.memo(({ message, isOwn }) => {
     const { sender, content, timing, metadata_info, status } = message;
     const isAi = sender.role === 'ai';
     const isTeacher = sender.role === 'teacher';
@@ -163,4 +163,4 @@ export const MessageBubble: React.FC<Props> = ({ message, isOwn }) => {
             </div>
         </div>
     );
-};
+});

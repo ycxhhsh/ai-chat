@@ -26,8 +26,8 @@ async def push_grading_task(
 ) -> bool:
     """将评分任务推入 Redis 队列。"""
     try:
-        from app.infra.redis_client import get_client
-        redis = get_client()
+        from app.infra.redis_client import get_redis
+        redis = get_redis()
         if not redis:
             logger.warning("Redis not available, grading skipped")
             return False
@@ -119,13 +119,13 @@ async def _save_grading_result(
 
 async def grading_worker_loop() -> None:
     """评分 Worker 主循环 — BRPOP 消费评分任务。"""
-    from app.infra.redis_client import get_client
+    from app.infra.redis_client import get_redis
 
     logger.info("Grading worker started, listening on %s", GRADING_QUEUE)
 
     while True:
         try:
-            redis = get_client()
+            redis = get_redis()
             if not redis:
                 await asyncio.sleep(5)
                 continue

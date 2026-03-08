@@ -29,6 +29,24 @@ class ConnectionManager:
         self._user_info: dict[WebSocket, dict] = {}
         # Redis pubsub 监听任务
         self._pubsub_tasks: dict[str, asyncio.Task] = {}
+        # 后台任务注册表（生命周期管理）
+        self._background_tasks: set[asyncio.Task] = set()
+
+    def _track_task(self, coro) -> asyncio.Task:
+        """创建并追踪后台任务，完成后自动移除。"""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
+    async def shutdown(self) -> None:
+        """优雅关闭所有后台任务。"""
+        for task in list(self._background_tasks):
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        for task in list(self._pubsub_tasks.values()):
+            task.cancel()
 
     async def connect(
         self,
@@ -181,7 +199,7 @@ class ConnectionManager:
         channel = f"{self.CHANNEL_PREFIX}{session_id}"
         pubsub = await redis_client.subscribe(channel)
         if pubsub:
-            task = asyncio.create_task(
+            task = self._track_task(
                 self._redis_listener_loop(session_id, pubsub)
             )
             self._pubsub_tasks[session_id] = task
@@ -219,7 +237,7 @@ class ConnectionManager:
 
                     if event == "AI_REPLY_DONE":
                         # 拦截：由 FastAPI 进程处理落库和后续任务
-                        asyncio.create_task(
+                        self._track_task(
                             self._handle_ai_reply_done(parsed.get("data", {}))
                         )
                         continue  # 不转发给客户端
@@ -293,7 +311,7 @@ class ConnectionManager:
         # 自动更新思维导图
         try:
             from app.websockets.handlers.mindmap import _generate_mindmap
-            asyncio.create_task(
+            self._track_task(
                 _generate_mindmap(session_id, user_info, self, auto_trigger=True)
             )
         except Exception as e:
@@ -301,7 +319,7 @@ class ConnectionManager:
 
         # 更新对话统计
         if conversation_id:
-            asyncio.create_task(
+            self._track_task(
                 self._update_conversation_after_reply(
                     conversation_id=conversation_id,
                     user_message=data.get("user_message", ""),

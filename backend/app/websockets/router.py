@@ -42,10 +42,13 @@ async def _heartbeat(websocket: WebSocket) -> None:
         pass
 
 
-async def _load_session_data(session_id: str, user_id: str = "") -> dict:
+async def _load_session_data(
+    session_id: str, user_id: str = "", after_cursor: str = "",
+) -> dict:
     """加载 SESSION_JOINED 所需的支架列表和历史消息。
 
     user_id 用于过滤：只返回小组消息 + 当前用户的私聊 AI 消息。
+    after_cursor: ISO 时间戳游标，若提供则只返回此时间之后的消息（增量）。
     """
     scaffolds_data = []
     recent_messages = []
@@ -76,7 +79,7 @@ async def _load_session_data(session_id: str, user_id: str = "") -> dict:
                 for s in scaffolds
             ]
 
-            # 加载最近 50 条消息（仅小组消息 + 当前用户的 AI 私聊）
+            # 加载消息（仅小组消息 + 当前用户的 AI 私聊）
             query = (
                 select(Message)
                 .where(Message.session_id == session_id)
@@ -88,8 +91,7 @@ async def _load_session_data(session_id: str, user_id: str = "") -> dict:
                         Message.recipient_id.is_(None),
                         # AI 回复给当前用户的消息
                         Message.recipient_id == user_id,
-                        # 用户发给 AI 的消息：通过 conversation 归属判断
-                        # conversation_id 是 AI 对话的标识，属于特定用户
+                        # 用户发给 AI 的消息
                         and_(
                             Message.recipient_id == "ai",
                             Message.conversation_id.in_(
@@ -100,6 +102,14 @@ async def _load_session_data(session_id: str, user_id: str = "") -> dict:
                         ),
                     )
                 )
+            # 游标增量：只返回 cursor 时间之后的消息
+            if after_cursor:
+                from datetime import datetime
+                try:
+                    cursor_dt = datetime.fromisoformat(after_cursor)
+                    query = query.where(Message.created_at > cursor_dt)
+                except ValueError:
+                    pass  # 无效游标，忽略
             result = await db.execute(
                 query.order_by(Message.created_at.desc()).limit(50)
             )
@@ -158,8 +168,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         websocket, session_id, user_id, user_name, role
     )
 
+    # 解析游标参数（重连增量加载）
+    cursor = websocket.query_params.get("cursor", "")
+
     # 加载 session 数据（支架 + 历史消息）
-    session_data = await _load_session_data(session_id, user_id=user_id)
+    session_data = await _load_session_data(
+        session_id, user_id=user_id, after_cursor=cursor,
+    )
 
     # 发送 SESSION_JOINED 事件
     from app.llm.factory import get_available_providers
