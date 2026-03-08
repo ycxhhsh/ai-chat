@@ -25,7 +25,7 @@ import {
     Position,
     BaseEdge,
     EdgeLabelRenderer,
-    getSmoothStepPath,
+    getBezierPath,
     MarkerType,
     NodeToolbar,
     type NodeProps,
@@ -117,7 +117,7 @@ function getLayoutedElements(
 
     const g = new dagre.graphlib.Graph();
     g.setDefaultEdgeLabel(() => ({}));
-    g.setGraph({ rankdir: direction, nodesep: 80, ranksep: 120 });
+    g.setGraph({ rankdir: direction, nodesep: 120, ranksep: 160, edgesep: 40 });
 
     nodes.forEach((node) => {
         g.setNode(node.id, { width: DAGRE_NODE_WIDTH, height: DAGRE_NODE_HEIGHT });
@@ -193,7 +193,10 @@ function MindMapCustomNode({ data, id, selected }: NodeProps<Node<MindMapNodeDat
 
     // 多消息溯源：依次高亮，500ms 间隔
     const handleTraceSource = useCallback(() => {
-        if (sourceMessageIds.length === 0) return;
+        if (sourceMessageIds.length === 0) {
+            console.warn('[MindMap] No source_message_ids on node', id);
+            return;
+        }
         if (sourceMessageIds.length === 1) {
             setHighlightedMsgId(sourceMessageIds[0]);
             return;
@@ -204,7 +207,7 @@ function MindMapCustomNode({ data, id, selected }: NodeProps<Node<MindMapNodeDat
                 setHighlightedMsgId(msgId);
             }, idx * 500);
         });
-    }, [sourceMessageIds, setHighlightedMsgId]);
+    }, [sourceMessageIds, setHighlightedMsgId, id]);
 
     // 快捷连接：创建子节点 + 边
     const handleQuickConnect = useCallback(
@@ -245,6 +248,7 @@ function MindMapCustomNode({ data, id, selected }: NodeProps<Node<MindMapNodeDat
             }}
         >
             <Handle type="target" position={Position.Left} className="!w-2.5 !h-2.5 !bg-gray-300 !border-2 !border-white" />
+            <Handle type="target" position={Position.Top} className="!w-2.5 !h-2.5 !bg-gray-300 !border-2 !border-white" />
 
             {/* Sprint 2: 浮动快捷工具栏 */}
             <NodeToolbar isVisible={selected} position={Position.Bottom} offset={8}>
@@ -325,13 +329,14 @@ function MindMapCustomNode({ data, id, selected }: NodeProps<Node<MindMapNodeDat
                         e.stopPropagation();
                         removeNode(id);
                     }}
-                    className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-[10px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow"
+                    className="absolute -top-2.5 -right-2.5 w-7 h-7 bg-red-500 text-white rounded-full text-xs leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity hover:bg-red-600 shadow-md"
                 >
                     ×
                 </button>
             </div>
 
             <Handle type="source" position={Position.Right} className="!w-2.5 !h-2.5 !bg-gray-300 !border-2 !border-white" />
+            <Handle type="source" position={Position.Bottom} className="!w-2.5 !h-2.5 !bg-gray-300 !border-2 !border-white" />
         </div>
     );
 }
@@ -355,14 +360,13 @@ function MindMapCustomEdge({
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(String(label || ''));
     const inputRef = useRef<HTMLInputElement>(null);
-    const [edgePath, labelX, labelY] = getSmoothStepPath({
+    const [edgePath, labelX, labelY] = getBezierPath({
         sourceX,
         sourceY,
         sourcePosition,
         targetX,
         targetY,
         targetPosition,
-        borderRadius: 12,
     });
 
     const isDraft = id?.startsWith('draft_') ?? false;
@@ -451,7 +455,7 @@ function MindMapCustomEdge({
                                 e.stopPropagation();
                                 removeEdge(id);
                             }}
-                            className="absolute -top-2 -right-2 w-4 h-4 bg-red-500 text-white rounded-full text-[9px] leading-none flex items-center justify-center hover:bg-red-600 shadow"
+                            className="absolute -top-2.5 -right-2.5 w-6 h-6 bg-red-500 text-white rounded-full text-[11px] leading-none flex items-center justify-center hover:bg-red-600 shadow-md"
                         >
                             ×
                         </button>
@@ -532,7 +536,11 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
             position: n.position,
         }));
         onNodesChange(changes);
-    }, [mergedNodes, mergedEdges, onNodesChange]);
+        // 排版完成后自适应视口（带动画）
+        requestAnimationFrame(() => {
+            reactFlowInstance.fitView({ padding: 0.3, duration: 300 });
+        });
+    }, [mergedNodes, mergedEdges, onNodesChange, reactFlowInstance]);
 
     // 拖拽连线创建新边
     const handleConnect = useCallback(

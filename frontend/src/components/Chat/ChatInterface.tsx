@@ -66,6 +66,8 @@ export const ChatInterface: React.FC<Props> = ({
         const el = document.getElementById(`msg-${highlightedMsgId}`);
         if (el) {
             el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else {
+            console.warn('[Trace] message element not in DOM:', highlightedMsgId);
         }
     }, [highlightedMsgId]);
 

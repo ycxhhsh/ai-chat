@@ -28,7 +28,7 @@ services:
       retries: 5
 
   y-websocket:
-    image: yjs/y-websocket
+    build: ./yjs
     container_name: cothink-yjs
     ports:
       - "1234:1234"
@@ -37,11 +37,12 @@ services:
       PORT: "1234"
       YPERSISTENCE: "./dbDir"
     volumes:
-      - yjs_data:/usr/src/app/dbDir
+      - yjs_data:/app/dbDir
     restart: unless-stopped
 
   backend:
     build: ./backend
+    image: cothink-backend:latest
     container_name: cothink-backend
     ports:
       - "8000:8000"
@@ -57,7 +58,7 @@ services:
     restart: unless-stopped
 
   ai-worker:
-    build: ./backend
+    image: cothink-backend:latest
     container_name: cothink-ai-worker
     command: python -m app.infra.ai_worker
     env_file:
@@ -72,7 +73,7 @@ services:
       replicas: 1
 
   grading-worker:
-    build: ./backend
+    image: cothink-backend:latest
     container_name: cothink-grading-worker
     command: python -m app.infra.grading_worker
     env_file:
