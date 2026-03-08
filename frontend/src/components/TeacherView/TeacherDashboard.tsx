@@ -956,209 +956,245 @@ export const TeacherDashboard: React.FC = () => {
                                 <div className="text-center py-12 text-gray-400">加载中...</div>
                             ) : (
                                 <div className="space-y-6">
-                                    {/* 参与度曲线 */}
-                                    {analyticsData.participation_trend && analyticsData.participation_trend.length > 0 && (
-                                        <div className="bg-white rounded-xl border border-gray-200 p-5">
-                                            <h3 className="text-sm font-semibold text-gray-900 mb-4">参与度趋势</h3>
-                                            <ResponsiveContainer width="100%" height={250}>
-                                                <LineChart data={analyticsData.participation_trend}>
-                                                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                                    <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                                                    <YAxis tick={{ fontSize: 11 }} />
-                                                    <Tooltip />
-                                                    <Line type="monotone" dataKey="count" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} name="消息数" />
-                                                </LineChart>
-                                            </ResponsiveContainer>
-                                        </div>
-                                    )}
-
-                                    {/* AI 介入率 */}
-                                    {analyticsData.ai_intervention_rate && analyticsData.ai_intervention_rate.length > 0 && (
-                                        <div className="bg-white rounded-xl border border-gray-200 p-5">
-                                            <h3 className="text-sm font-semibold text-gray-900 mb-4">AI 介入率（每位学生）</h3>
-                                            <ResponsiveContainer width="100%" height={250}>
-                                                <BarChart data={analyticsData.ai_intervention_rate}>
-                                                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                                    <XAxis dataKey="student_name" tick={{ fontSize: 10 }} />
-                                                    <YAxis tick={{ fontSize: 11 }} />
-                                                    <Tooltip />
-                                                    <Bar dataKey="ai_ratio" fill="#8b5cf6" radius={[4, 4, 0, 0]} name="AI 消息占比" />
-                                                </BarChart>
-                                            </ResponsiveContainer>
-                                        </div>
-                                    )}
-
-                                    {/* 支架使用饼图 */}
-                                    {analyticsData.scaffold_usage && analyticsData.scaffold_usage.length > 0 && (
-                                        <div className="bg-white rounded-xl border border-gray-200 p-5">
-                                            <h3 className="text-sm font-semibold text-gray-900 mb-4">支架使用分布</h3>
-                                            <ResponsiveContainer width="100%" height={250}>
-                                                <PieChart>
-                                                    <Pie
-                                                        data={analyticsData.scaffold_usage}
-                                                        cx="50%"
-                                                        cy="50%"
-                                                        outerRadius={80}
-                                                        dataKey="count"
-                                                        nameKey="scaffold_name"
-                                                        label={(props: any) =>
-                                                            `${props.scaffold_name || ''} ${((props.percent || 0) * 100).toFixed(0)}%`
-                                                        }
-                                                    >
-                                                        {analyticsData.scaffold_usage.map((_: unknown, idx: number) => (
-                                                            <Cell key={idx} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
-                                                        ))}
-                                                    </Pie>
-                                                    <Tooltip />
-                                                    <Legend />
-                                                </PieChart>
-                                            </ResponsiveContainer>
-                                        </div>
-                                    )}
-
-                                    {/* 讨论深度 */}
-                                    {analyticsData.discussion_depth && analyticsData.discussion_depth.length > 0 && (
-                                        <div className="bg-white rounded-xl border border-gray-200 p-5">
-                                            <h3 className="text-sm font-semibold text-gray-900 mb-4">💬 讨论深度（平均消息长度）</h3>
-                                            <ResponsiveContainer width="100%" height={250}>
-                                                <BarChart data={analyticsData.discussion_depth}>
-                                                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                                    <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                                                    <YAxis tick={{ fontSize: 11 }} />
-                                                    <Tooltip formatter={(v: number | string | undefined) => [`${v} 字`, '平均长度']} />
-                                                    <Bar dataKey="avg_length" fill="#10b981" radius={[4, 4, 0, 0]} name="平均字数" />
-                                                </BarChart>
-                                            </ResponsiveContainer>
-                                        </div>
-                                    )}
-
-                                    {/* 支架依赖度 */}
-                                    {analyticsData.scaffold_dependency && analyticsData.scaffold_dependency.total > 0 && (
-                                        <div className="bg-white rounded-xl border border-gray-200 p-5">
-                                            <h3 className="text-sm font-semibold text-gray-900 mb-3">🔧 支架依赖度</h3>
-                                            <div className="flex items-center gap-4">
-                                                <div className="flex-1">
-                                                    <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-                                                        <div
-                                                            className="h-full bg-gradient-to-r from-indigo-500 to-violet-500 rounded-full transition-all"
-                                                            style={{ width: `${analyticsData.scaffold_dependency.rate}%` }}
-                                                        />
-                                                    </div>
-                                                </div>
-                                                <span className="text-sm font-semibold text-gray-700 whitespace-nowrap">
-                                                    {analyticsData.scaffold_dependency.rate}%
-                                                </span>
-                                            </div>
-                                            <p className="text-xs text-gray-400 mt-2">
-                                                {analyticsData.scaffold_dependency.scaffold_used} / {analyticsData.scaffold_dependency.total} 条学生消息使用了支架辅助
-                                            </p>
-                                        </div>
-                                    )}
-
-                                    {/* 活跃会话 */}
-                                    {analyticsData.active_sessions && analyticsData.active_sessions.length > 0 && (
-                                        <div className="bg-white rounded-xl border border-gray-200 p-5">
-                                            <h3 className="text-sm font-semibold text-gray-900 mb-4">活跃会话</h3>
-                                            <div className="space-y-2">
-                                                {analyticsData.active_sessions.map((s: Record<string, unknown>, i: number) => (
-                                                    <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg text-sm">
-                                                        <span className="text-gray-700 text-sm font-medium">{(s.group_name as string) || (s.session_id as string)?.slice(0, 12) + '...'}</span>
-                                                        <span className="text-gray-500">{s.message_count as number} 条消息</span>
-                                                        <span className="text-gray-400 text-xs">{s.last_activity as string}</span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* 参与度热力图 */}
-                                    {analyticsData.participation_heatmap && analyticsData.participation_heatmap.length > 0 && (() => {
-                                        const hm = analyticsData.participation_heatmap as { student_name: string; date: string; count: number }[];
-                                        const hmStudents = [...new Set(hm.map(d => d.student_name))];
-                                        const dates = [...new Set(hm.map(d => d.date))].sort();
-                                        const maxCount = Math.max(...hm.map(d => d.count), 1);
-                                        const lookup = new Map(hm.map(d => [`${d.student_name}-${d.date}`, d.count]));
+                                    {/* KPI 概览卡组 */}
+                                    {(() => {
+                                        const totalMsgs = analyticsData.participation_trend
+                                            ?.reduce((s: number, d: { count: number }) => s + d.count, 0) || 0;
+                                        const activeStudents = analyticsData.ai_intervention_rate?.length || 0;
+                                        const avgAiRate = activeStudents > 0
+                                            ? (analyticsData.ai_intervention_rate!.reduce((s: number, d: { ai_ratio: number }) => s + d.ai_ratio, 0) / activeStudents * 100).toFixed(1)
+                                            : '0';
+                                        const days = analyticsData.participation_trend?.length || 1;
+                                        const dailyAvg = (totalMsgs / days).toFixed(1);
                                         return (
-                                            <div className="bg-white rounded-xl border border-gray-200 p-4">
-                                                <h3 className="text-sm font-semibold text-gray-900 mb-3">📊 参与度热力图</h3>
-                                                <div className="overflow-x-auto">
-                                                    <div className="inline-grid gap-[2px]" style={{ gridTemplateColumns: `100px repeat(${dates.length}, 28px)` }}>
-                                                        <div className="text-[9px] text-gray-400" />
-                                                        {dates.map(d => <div key={d} className="text-[8px] text-gray-400 text-center rotate-[-45deg] origin-bottom-left h-6">{d.slice(5)}</div>)}
-                                                        {hmStudents.map(s => (
-                                                            <React.Fragment key={`row-${s}`}>
-                                                                <div className="text-[10px] text-gray-600 truncate pr-1 flex items-center">{s}</div>
-                                                                {dates.map(d => {
-                                                                    const v = lookup.get(`${s}-${d}`) || 0;
-                                                                    const intensity = v / maxCount;
-                                                                    return (
-                                                                        <div
-                                                                            key={`${s}-${d}`}
-                                                                            className="w-6 h-6 rounded-sm"
-                                                                            style={{ backgroundColor: v === 0 ? '#f3f4f6' : `rgba(99, 102, 241, ${0.15 + intensity * 0.85})` }}
-                                                                            title={`${s} ${d}: ${v} 条`}
-                                                                        />
-                                                                    );
-                                                                })}
-                                                            </React.Fragment>
-                                                        ))}
-                                                    </div>
+                                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                                <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-xl p-4 border border-indigo-200/50">
+                                                    <p className="text-xs text-indigo-500 font-medium">总发言数</p>
+                                                    <p className="text-2xl font-bold text-indigo-700 mt-1">{totalMsgs}</p>
                                                 </div>
-                                                <div className="flex items-center gap-2 mt-3">
-                                                    <span className="text-[9px] text-gray-400">少</span>
-                                                    {[0.1, 0.3, 0.5, 0.7, 1].map(v => (
-                                                        <div key={v} className="w-3 h-3 rounded-sm" style={{ backgroundColor: `rgba(99, 102, 241, ${0.15 + v * 0.85})` }} />
+                                                <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-xl p-4 border border-emerald-200/50">
+                                                    <p className="text-xs text-emerald-500 font-medium">活跃学生</p>
+                                                    <p className="text-2xl font-bold text-emerald-700 mt-1">{activeStudents}</p>
+                                                </div>
+                                                <div className="bg-gradient-to-br from-violet-50 to-violet-100 rounded-xl p-4 border border-violet-200/50">
+                                                    <p className="text-xs text-violet-500 font-medium">AI 介入率</p>
+                                                    <p className="text-2xl font-bold text-violet-700 mt-1">{avgAiRate}%</p>
+                                                </div>
+                                                <div className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-xl p-4 border border-amber-200/50">
+                                                    <p className="text-xs text-amber-500 font-medium">日均发言</p>
+                                                    <p className="text-2xl font-bold text-amber-700 mt-1">{dailyAvg}</p>
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+
+                                    {/* 图表区：两列网格 */}
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                                        {/* 参与度曲线 */}
+                                        {analyticsData.participation_trend && analyticsData.participation_trend.length > 0 && (
+                                            <div className="bg-white rounded-xl border border-gray-200 p-5">
+                                                <h3 className="text-sm font-semibold text-gray-900 mb-4">参与度趋势</h3>
+                                                <ResponsiveContainer width="100%" height={250}>
+                                                    <LineChart data={analyticsData.participation_trend}>
+                                                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                                        <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                                                        <YAxis tick={{ fontSize: 11 }} />
+                                                        <Tooltip />
+                                                        <Line type="monotone" dataKey="count" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} name="消息数" />
+                                                    </LineChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        )}
+
+                                        {/* AI 介入率 */}
+                                        {analyticsData.ai_intervention_rate && analyticsData.ai_intervention_rate.length > 0 && (
+                                            <div className="bg-white rounded-xl border border-gray-200 p-5">
+                                                <h3 className="text-sm font-semibold text-gray-900 mb-4">AI 介入率（每位学生）</h3>
+                                                <ResponsiveContainer width="100%" height={250}>
+                                                    <BarChart data={analyticsData.ai_intervention_rate}>
+                                                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                                        <XAxis dataKey="student_name" tick={{ fontSize: 10 }} />
+                                                        <YAxis tick={{ fontSize: 11 }} />
+                                                        <Tooltip />
+                                                        <Bar dataKey="ai_ratio" fill="#8b5cf6" radius={[4, 4, 0, 0]} name="AI 消息占比" />
+                                                    </BarChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        )}
+
+                                        {/* 支架使用饼图 */}
+                                        {analyticsData.scaffold_usage && analyticsData.scaffold_usage.length > 0 && (
+                                            <div className="bg-white rounded-xl border border-gray-200 p-5">
+                                                <h3 className="text-sm font-semibold text-gray-900 mb-4">支架使用分布</h3>
+                                                <ResponsiveContainer width="100%" height={250}>
+                                                    <PieChart>
+                                                        <Pie
+                                                            data={analyticsData.scaffold_usage}
+                                                            cx="50%"
+                                                            cy="50%"
+                                                            outerRadius={80}
+                                                            dataKey="count"
+                                                            nameKey="scaffold_name"
+                                                            label={(props: any) =>
+                                                                `${props.scaffold_name || ''} ${((props.percent || 0) * 100).toFixed(0)}%`
+                                                            }
+                                                        >
+                                                            {analyticsData.scaffold_usage.map((_: unknown, idx: number) => (
+                                                                <Cell key={idx} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
+                                                            ))}
+                                                        </Pie>
+                                                        <Tooltip />
+                                                        <Legend />
+                                                    </PieChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        )}
+
+                                        {/* 讨论深度 */}
+                                        {analyticsData.discussion_depth && analyticsData.discussion_depth.length > 0 && (
+                                            <div className="bg-white rounded-xl border border-gray-200 p-5">
+                                                <h3 className="text-sm font-semibold text-gray-900 mb-4">💬 讨论深度（平均消息长度）</h3>
+                                                <ResponsiveContainer width="100%" height={250}>
+                                                    <BarChart data={analyticsData.discussion_depth}>
+                                                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                                        <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                                                        <YAxis tick={{ fontSize: 11 }} />
+                                                        <Tooltip formatter={(v: number | string | undefined) => [`${v} 字`, '平均长度']} />
+                                                        <Bar dataKey="avg_length" fill="#10b981" radius={[4, 4, 0, 0]} name="平均字数" />
+                                                    </BarChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        )}
+
+                                        {/* 支架依赖度 */}
+                                        {analyticsData.scaffold_dependency && analyticsData.scaffold_dependency.total > 0 && (
+                                            <div className="bg-white rounded-xl border border-gray-200 p-5">
+                                                <h3 className="text-sm font-semibold text-gray-900 mb-3">🔧 支架依赖度</h3>
+                                                <div className="flex items-center gap-4">
+                                                    <div className="flex-1">
+                                                        <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                                                            <div
+                                                                className="h-full bg-gradient-to-r from-indigo-500 to-violet-500 rounded-full transition-all"
+                                                                style={{ width: `${analyticsData.scaffold_dependency.rate}%` }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                    <span className="text-sm font-semibold text-gray-700 whitespace-nowrap">
+                                                        {analyticsData.scaffold_dependency.rate}%
+                                                    </span>
+                                                </div>
+                                                <p className="text-xs text-gray-400 mt-2">
+                                                    {analyticsData.scaffold_dependency.scaffold_used} / {analyticsData.scaffold_dependency.total} 条学生消息使用了支架辅助
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        {/* 活跃会话 */}
+                                        {analyticsData.active_sessions && analyticsData.active_sessions.length > 0 && (
+                                            <div className="bg-white rounded-xl border border-gray-200 p-5">
+                                                <h3 className="text-sm font-semibold text-gray-900 mb-4">活跃会话</h3>
+                                                <div className="space-y-2">
+                                                    {analyticsData.active_sessions.map((s: Record<string, unknown>, i: number) => (
+                                                        <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg text-sm">
+                                                            <span className="text-gray-700 text-sm font-medium">{(s.group_name as string) || (s.session_id as string)?.slice(0, 12) + '...'}</span>
+                                                            <span className="text-gray-500">{s.message_count as number} 条消息</span>
+                                                            <span className="text-gray-400 text-xs">{s.last_activity as string}</span>
+                                                        </div>
                                                     ))}
-                                                    <span className="text-[9px] text-gray-400">多</span>
                                                 </div>
                                             </div>
-                                        );
-                                    })()}
+                                        )}
 
-                                    {/* 词云 (SVG 增强布局) */}
-                                    {analyticsData.word_cloud && analyticsData.word_cloud.length > 0 && (() => {
-                                        const words = analyticsData.word_cloud as { word: string; count: number }[];
-                                        const top50 = words.slice(0, 50);
-                                        const maxC = Math.max(...top50.map(w => w.count), 1);
-                                        const colors = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#14b8a6'];
-                                        // 螺旋布局：每个词按螺旋角度分布
-                                        const cx = 300, cy = 150;
-                                        return (
-                                            <div className="bg-white rounded-xl border border-gray-200 p-4">
-                                                <h3 className="text-sm font-semibold text-gray-900 mb-3">☁️ 高频词云</h3>
-                                                <svg viewBox="0 0 600 300" className="w-full" style={{ maxHeight: 300 }}>
-                                                    {top50.map((w, i) => {
-                                                        const ratio = w.count / maxC;
-                                                        const size = 12 + ratio * 22;
-                                                        // 螺旋坐标
-                                                        const angle = i * 137.508 * (Math.PI / 180); // 黄金角
-                                                        const r = 20 + i * 3.5;
-                                                        const x = cx + r * Math.cos(angle);
-                                                        const y = cy + r * Math.sin(angle) * 0.6;
-                                                        const rotation = i % 5 === 0 ? -90 : i % 7 === 0 ? 90 : 0;
-                                                        return (
-                                                            <text
-                                                                key={w.word}
-                                                                x={x}
-                                                                y={y}
-                                                                textAnchor="middle"
-                                                                dominantBaseline="central"
-                                                                fontSize={size}
-                                                                fontWeight={ratio > 0.5 ? 700 : 400}
-                                                                fill={colors[i % colors.length]}
-                                                                opacity={0.6 + ratio * 0.4}
-                                                                transform={rotation ? `rotate(${rotation}, ${x}, ${y})` : undefined}
-                                                                className="transition-all hover:opacity-100 cursor-default"
-                                                            >
-                                                                <title>{`${w.word}: ${w.count} 次`}</title>
-                                                                {w.word}
-                                                            </text>
-                                                        );
-                                                    })}
-                                                </svg>
-                                            </div>
-                                        );
-                                    })()}
+                                        {/* 参与度热力图 */}
+                                        {analyticsData.participation_heatmap && analyticsData.participation_heatmap.length > 0 && (() => {
+                                            const hm = analyticsData.participation_heatmap as { student_name: string; date: string; count: number }[];
+                                            const hmStudents = [...new Set(hm.map(d => d.student_name))];
+                                            const dates = [...new Set(hm.map(d => d.date))].sort();
+                                            const maxCount = Math.max(...hm.map(d => d.count), 1);
+                                            const lookup = new Map(hm.map(d => [`${d.student_name}-${d.date}`, d.count]));
+                                            return (
+                                                <div className="bg-white rounded-xl border border-gray-200 p-4">
+                                                    <h3 className="text-sm font-semibold text-gray-900 mb-3">📊 参与度热力图</h3>
+                                                    <div className="overflow-x-auto">
+                                                        <div className="inline-grid gap-[2px]" style={{ gridTemplateColumns: `100px repeat(${dates.length}, 28px)` }}>
+                                                            <div className="text-[9px] text-gray-400" />
+                                                            {dates.map(d => <div key={d} className="text-[8px] text-gray-400 text-center rotate-[-45deg] origin-bottom-left h-6">{d.slice(5)}</div>)}
+                                                            {hmStudents.map(s => (
+                                                                <React.Fragment key={`row-${s}`}>
+                                                                    <div className="text-[10px] text-gray-600 truncate pr-1 flex items-center">{s}</div>
+                                                                    {dates.map(d => {
+                                                                        const v = lookup.get(`${s}-${d}`) || 0;
+                                                                        const intensity = v / maxCount;
+                                                                        return (
+                                                                            <div
+                                                                                key={`${s}-${d}`}
+                                                                                className="w-6 h-6 rounded-sm"
+                                                                                style={{ backgroundColor: v === 0 ? '#f3f4f6' : `rgba(99, 102, 241, ${0.15 + intensity * 0.85})` }}
+                                                                                title={`${s} ${d}: ${v} 条`}
+                                                                            />
+                                                                        );
+                                                                    })}
+                                                                </React.Fragment>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-2 mt-3">
+                                                        <span className="text-[9px] text-gray-400">少</span>
+                                                        {[0.1, 0.3, 0.5, 0.7, 1].map(v => (
+                                                            <div key={v} className="w-3 h-3 rounded-sm" style={{ backgroundColor: `rgba(99, 102, 241, ${0.15 + v * 0.85})` }} />
+                                                        ))}
+                                                        <span className="text-[9px] text-gray-400">多</span>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
+
+                                        {/* 词云 (SVG 增强布局) */}
+                                        {analyticsData.word_cloud && analyticsData.word_cloud.length > 0 && (() => {
+                                            const words = analyticsData.word_cloud as { word: string; count: number }[];
+                                            const top50 = words.slice(0, 50);
+                                            const maxC = Math.max(...top50.map(w => w.count), 1);
+                                            const colors = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#14b8a6'];
+                                            // 螺旋布局：每个词按螺旋角度分布
+                                            const cx = 300, cy = 150;
+                                            return (
+                                                <div className="bg-white rounded-xl border border-gray-200 p-4">
+                                                    <h3 className="text-sm font-semibold text-gray-900 mb-3">☁️ 高频词云</h3>
+                                                    <svg viewBox="0 0 600 300" className="w-full" style={{ maxHeight: 300 }}>
+                                                        {top50.map((w, i) => {
+                                                            const ratio = w.count / maxC;
+                                                            const size = 12 + ratio * 22;
+                                                            // 螺旋坐标
+                                                            const angle = i * 137.508 * (Math.PI / 180); // 黄金角
+                                                            const r = 20 + i * 3.5;
+                                                            const x = cx + r * Math.cos(angle);
+                                                            const y = cy + r * Math.sin(angle) * 0.6;
+                                                            const rotation = i % 5 === 0 ? -90 : i % 7 === 0 ? 90 : 0;
+                                                            return (
+                                                                <text
+                                                                    key={w.word}
+                                                                    x={x}
+                                                                    y={y}
+                                                                    textAnchor="middle"
+                                                                    dominantBaseline="central"
+                                                                    fontSize={size}
+                                                                    fontWeight={ratio > 0.5 ? 700 : 400}
+                                                                    fill={colors[i % colors.length]}
+                                                                    opacity={0.6 + ratio * 0.4}
+                                                                    transform={rotation ? `rotate(${rotation}, ${x}, ${y})` : undefined}
+                                                                    className="transition-all hover:opacity-100 cursor-default"
+                                                                >
+                                                                    <title>{`${w.word}: ${w.count} 次`}</title>
+                                                                    {w.word}
+                                                                </text>
+                                                            );
+                                                        })}
+                                                    </svg>
+                                                </div>
+                                            );
+                                        })()}
+
+                                    </div>{/* end grid */}
 
                                     {/* 🧠 Bloom 认知层次分析 */}
                                     <div className="bg-white rounded-xl border border-gray-200 p-5">
