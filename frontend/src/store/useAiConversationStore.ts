@@ -18,8 +18,8 @@ interface AiConversationState {
     currentConversationId: string | null;
     loading: boolean;
 
-    fetchConversations: () => Promise<void>;
-    createConversation: (llmProvider?: string) => Promise<AiConversation>;
+    fetchConversations: (groupId?: string) => Promise<void>;
+    createConversation: (llmProvider?: string, groupId?: string) => Promise<AiConversation>;
     selectConversation: (id: string | null) => void;
     deleteConversation: (id: string) => Promise<void>;
     updateTitle: (id: string, title: string) => void;
@@ -32,10 +32,10 @@ export const useAiConversationStore = create<AiConversationState>((set, get) => 
     currentConversationId: null,
     loading: false,
 
-    fetchConversations: async () => {
+    fetchConversations: async (groupId?: string) => {
         set({ loading: true });
         try {
-            const data = await api.aiConversations.list();
+            const data = await api.aiConversations.list(groupId);
             set({ conversations: data, loading: false });
         } catch (e) {
             console.error('Failed to fetch conversations:', e);
@@ -43,8 +43,8 @@ export const useAiConversationStore = create<AiConversationState>((set, get) => 
         }
     },
 
-    createConversation: async (llmProvider?: string) => {
-        const data = await api.aiConversations.create(llmProvider);
+    createConversation: async (llmProvider?: string, groupId?: string) => {
+        const data = await api.aiConversations.create(llmProvider, groupId);
         set((s) => ({
             conversations: [data, ...s.conversations],
             currentConversationId: data.conversation_id,

@@ -6,8 +6,9 @@ import io
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import func, select, case, literal_column, cast, String as SAString
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +24,7 @@ from app.services.analytics_service import (
     build_participation_heatmap,
     build_word_cloud,
     run_bloom_analysis,
+    build_mindmap_depth_stats,
 )
 from app.llm.factory import get_llm_client
 
@@ -480,6 +482,14 @@ async def get_analytics(
         logger.warning("Word cloud wrapper failed: %s", e)
         await db.rollback()
 
+    # 9. P1: 思维导图深度统计
+    mindmap_depth = []
+    try:
+        mindmap_depth = await build_mindmap_depth_stats(db)
+    except Exception as e:
+        logger.warning("Mindmap depth stats wrapper failed: %s", e)
+        await db.rollback()
+
     return {
         "scaffold_usage": scaffold_heatmap,
         "ai_intervention_rate": ai_intervention_rate,
@@ -489,6 +499,7 @@ async def get_analytics(
         "active_sessions": active_sessions,
         "participation_heatmap": participation_heatmap,
         "word_cloud": word_cloud,
+        "mindmap_depth": mindmap_depth,
     }
 
 
@@ -859,4 +870,250 @@ async def export_unified_csv(
         iter([bom + output.getvalue()]),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=unified_messages.csv"},
+    )
+
+
+# ────────────────────── 教师端小组管理 ──────────────────────
+
+
+@router.get("/groups")
+async def list_all_groups(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _teacher: Annotated[User, Depends(require_teacher)],
+):
+    """教师查看所有小组及其成员列表。"""
+    result = await db.execute(
+        select(Group).order_by(Group.created_at.desc())
+    )
+    groups = result.scalars().all()
+
+    group_data = []
+    for g in groups:
+        # 获取每个小组的成员列表
+        members_result = await db.execute(
+            select(GroupMember, User)
+            .join(User, User.user_id == GroupMember.user_id)
+            .where(GroupMember.group_id == g.id)
+            .order_by(GroupMember.joined_at.asc())
+        )
+        members = [
+            {
+                "user_id": gm.user_id,
+                "name": u.name,
+                "email": u.email,
+                "role": gm.role,
+                "joined_at": gm.joined_at.isoformat() if gm.joined_at else "",
+            }
+            for gm, u in members_result.all()
+        ]
+        group_data.append({
+            "id": g.id,
+            "name": g.name,
+            "invite_code": g.invite_code,
+            "created_by": g.created_by,
+            "created_at": g.created_at.isoformat() if g.created_at else "",
+            "member_count": len(members),
+            "members": members,
+        })
+
+    return group_data
+
+
+@router.delete("/groups/{group_id}/members/{user_id}")
+async def remove_group_member(
+    group_id: str,
+    user_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _teacher: Annotated[User, Depends(require_teacher)],
+):
+    """教师将学生移出小组。"""
+    from sqlalchemy import delete as sql_delete
+
+    result = await db.execute(
+        select(GroupMember).where(
+            GroupMember.group_id == group_id,
+            GroupMember.user_id == user_id,
+        )
+    )
+    member = result.scalar_one_or_none()
+    if not member:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="该学生不在此小组中")
+
+    await db.execute(
+        sql_delete(GroupMember).where(
+            GroupMember.group_id == group_id,
+            GroupMember.user_id == user_id,
+        )
+    )
+    await db.commit()
+    return {"status": "removed", "group_id": group_id, "user_id": user_id}
+
+
+class TransferMemberBody(BaseModel):
+    target_group_id: str
+
+
+@router.post("/groups/{group_id}/members/{user_id}/transfer")
+async def transfer_group_member(
+    group_id: str,
+    user_id: str,
+    body: TransferMemberBody,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _teacher: Annotated[User, Depends(require_teacher)],
+):
+    """教师将学生从一个小组转移到另一个小组。"""
+    from sqlalchemy import delete as sql_delete
+    from fastapi import HTTPException
+
+    # 验证源小组中存在该成员
+    result = await db.execute(
+        select(GroupMember).where(
+            GroupMember.group_id == group_id,
+            GroupMember.user_id == user_id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="该学生不在源小组中")
+
+    # 验证目标小组存在
+    target = await db.execute(
+        select(Group).where(Group.id == body.target_group_id)
+    )
+    if not target.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="目标小组不存在")
+
+    # 检查目标小组是否已包含该成员
+    existing = await db.execute(
+        select(GroupMember).where(
+            GroupMember.group_id == body.target_group_id,
+            GroupMember.user_id == user_id,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="该学生已在目标小组中")
+
+    # 删除旧成员记录
+    await db.execute(
+        sql_delete(GroupMember).where(
+            GroupMember.group_id == group_id,
+            GroupMember.user_id == user_id,
+        )
+    )
+
+    # 添加到新小组
+    new_member = GroupMember(
+        group_id=body.target_group_id,
+        user_id=user_id,
+        role="member",
+    )
+    db.add(new_member)
+    await db.commit()
+
+    return {
+        "status": "transferred",
+        "user_id": user_id,
+        "from_group": group_id,
+        "to_group": body.target_group_id,
+    }
+
+
+class GroupRenameBody(BaseModel):
+    name: str
+
+
+@router.patch("/groups/{group_id}")
+async def teacher_rename_group(
+    group_id: str,
+    body: GroupRenameBody,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _teacher: Annotated[User, Depends(require_teacher)],
+):
+    """教师重命名小组。"""
+    from fastapi import HTTPException
+
+    result = await db.execute(select(Group).where(Group.id == group_id))
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="小组不存在")
+
+    group.name = body.name.strip()
+    db.add(group)
+    await db.commit()
+    await db.refresh(group)
+
+    return {
+        "id": group.id,
+        "name": group.name,
+        "invite_code": group.invite_code,
+    }
+
+
+@router.delete("/groups/{group_id}")
+async def teacher_delete_group(
+    group_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _teacher: Annotated[User, Depends(require_teacher)],
+):
+    """教师删除整个小组。"""
+    from sqlalchemy import delete as sql_delete
+    from fastapi import HTTPException
+
+    result = await db.execute(select(Group).where(Group.id == group_id))
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="小组不存在")
+
+    await db.execute(
+        sql_delete(GroupMember).where(GroupMember.group_id == group_id)
+    )
+    await db.execute(
+        sql_delete(Group).where(Group.id == group_id)
+    )
+    await db.commit()
+
+    return {"status": "deleted", "group_id": group_id}
+
+
+# ────────────────────── 教师端设置 ──────────────────────
+
+_SCAFFOLD_SUGGEST_KEY = "cothink:config:scaffold_suggest_enabled"
+
+
+@router.get("/settings/scaffold-suggest")
+async def get_scaffold_suggest_setting(
+    _teacher: Annotated[User, Depends(require_teacher)],
+):
+    """查询支架智能推送开关状态。"""
+    from app.infra.redis_client import is_available, get_redis
+
+    enabled = True  # 默认启用
+    if is_available():
+        pool = get_redis()
+        if pool:
+            val = await pool.get(_SCAFFOLD_SUGGEST_KEY)
+            if val is not None:
+                enabled = str(val).lower() != "false"
+    return {"enabled": enabled}
+
+
+class ScaffoldSuggestBody(BaseModel):
+    enabled: bool
+
+
+@router.put("/settings/scaffold-suggest")
+async def set_scaffold_suggest_setting(
+    body: ScaffoldSuggestBody,
+    _teacher: Annotated[User, Depends(require_teacher)],
+):
+    """切换支架智能推送开关。"""
+    from app.infra.redis_client import is_available, get_redis
+
+    if is_available():
+        pool = get_redis()
+        if pool:
+            await pool.set(_SCAFFOLD_SUGGEST_KEY, str(body.enabled).lower())
+            return {"enabled": body.enabled}
+
+    raise HTTPException(
+        status_code=503, detail="Redis 不可用，无法保存配置"
     )

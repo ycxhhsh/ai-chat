@@ -348,16 +348,74 @@ export const AssignmentPanel: React.FC = () => {
                                                     <h4 className="text-xs font-semibold text-violet-700">AI 评分</h4>
                                                 </div>
                                                 {(a.ai_review as Record<string, any>).total_score !== undefined && (
-                                                    <p className="text-lg font-bold text-violet-700 mb-1">
-                                                        {(a.ai_review as Record<string, any>).total_score} 分
+                                                    <p className="text-2xl font-bold text-violet-700 mb-2">
+                                                        {(a.ai_review as Record<string, any>).total_score}<span className="text-sm font-normal text-violet-400"> / 100</span>
                                                     </p>
                                                 )}
-                                                {(a.ai_review as Record<string, any>).summary && (
-                                                    <p className="text-xs text-violet-600">
+                                                {/* 五维度分数条 */}
+                                                {(a.ai_review as Record<string, any>).scores && (
+                                                    <div className="space-y-1.5 mb-2">
+                                                        {[
+                                                            { key: 'completeness', label: '内容完整性', max: 25 },
+                                                            { key: 'depth', label: '论证深度', max: 30 },
+                                                            { key: 'logic', label: '逻辑严密性', max: 20 },
+                                                            { key: 'creativity', label: '创新性', max: 10 },
+                                                            { key: 'clarity', label: '表达清晰度', max: 15 },
+                                                        ].map(d => {
+                                                            const score = (a.ai_review as Record<string, any>).scores[d.key];
+                                                            if (score === undefined) return null;
+                                                            const pct = Math.min(100, (score / d.max) * 100);
+                                                            return (
+                                                                <div key={d.key} className="flex items-center gap-2">
+                                                                    <span className="text-[10px] text-violet-500 w-16 shrink-0">{d.label}</span>
+                                                                    <div className="flex-1 h-1.5 bg-violet-100 rounded-full overflow-hidden">
+                                                                        <div className="h-full bg-violet-400 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                                                                    </div>
+                                                                    <span className="text-[10px] text-violet-600 w-10 text-right shrink-0">
+                                                                        {score}/{d.max}
+                                                                    </span>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                                {(a.ai_review as Record<string, any>).brief_comment && (
+                                                    <p className="text-xs text-violet-600 mb-1.5">
+                                                        {(a.ai_review as Record<string, any>).brief_comment}
+                                                    </p>
+                                                )}
+                                                {/* 兼容旧字段 summary */}
+                                                {!(a.ai_review as Record<string, any>).brief_comment && (a.ai_review as Record<string, any>).summary && (
+                                                    <p className="text-xs text-violet-600 mb-1.5">
                                                         {(a.ai_review as Record<string, any>).summary}
                                                     </p>
                                                 )}
-                                                {(a.ai_review as Record<string, any>).suggestions?.length > 0 && (
+                                                {((a.ai_review as Record<string, any>).strengths?.length > 0 || (a.ai_review as Record<string, any>).improvements?.length > 0) && (
+                                                    <div className="grid grid-cols-2 gap-2 mt-2">
+                                                        {(a.ai_review as Record<string, any>).strengths?.length > 0 && (
+                                                            <div>
+                                                                <p className="text-[10px] font-medium text-emerald-600 mb-0.5">✅ 优点</p>
+                                                                <ul className="space-y-0.5">
+                                                                    {((a.ai_review as Record<string, any>).strengths as string[]).map((s, i) => (
+                                                                        <li key={i} className="text-[10px] text-gray-600">• {s}</li>
+                                                                    ))}
+                                                                </ul>
+                                                            </div>
+                                                        )}
+                                                        {(a.ai_review as Record<string, any>).improvements?.length > 0 && (
+                                                            <div>
+                                                                <p className="text-[10px] font-medium text-amber-600 mb-0.5">💡 改进</p>
+                                                                <ul className="space-y-0.5">
+                                                                    {((a.ai_review as Record<string, any>).improvements as string[]).map((s, i) => (
+                                                                        <li key={i} className="text-[10px] text-gray-600">• {s}</li>
+                                                                    ))}
+                                                                </ul>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                                {/* 兼容旧字段 suggestions */}
+                                                {(a.ai_review as Record<string, any>).suggestions?.length > 0 && !(a.ai_review as Record<string, any>).improvements && (
                                                     <ul className="mt-2 space-y-1">
                                                         {((a.ai_review as Record<string, any>).suggestions as string[]).map((s: string, i: number) => (
                                                             <li key={i} className="text-xs text-violet-500 flex items-start gap-1">

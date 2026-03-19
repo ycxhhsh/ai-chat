@@ -15,6 +15,7 @@ interface GroupState {
     createGroup: (name: string) => Promise<Group>;
     joinGroup: (inviteCode: string) => Promise<void>;
     deleteGroup: (groupId: string) => Promise<void>;
+    renameGroup: (groupId: string, name: string) => Promise<void>;
     setCurrentGroup: (groupId: string | null) => void;
     clearGroups: () => void;
 }
@@ -48,6 +49,15 @@ export const useGroupStore = create<GroupState>()(
                 set((s) => ({
                     groups: s.groups.filter(g => g.id !== groupId),
                     currentGroupId: s.currentGroupId === groupId ? null : s.currentGroupId,
+                }));
+            },
+
+            renameGroup: async (groupId, name) => {
+                await api.groups.rename(groupId, name);
+                set((s) => ({
+                    groups: s.groups.map(g =>
+                        g.id === groupId ? { ...g, name } : g
+                    ),
                 }));
             },
 

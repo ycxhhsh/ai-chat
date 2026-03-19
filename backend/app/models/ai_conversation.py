@@ -20,6 +20,10 @@ class AiConversation(Base):
     user_id: Mapped[str] = mapped_column(
         String, index=True, nullable=False
     )
+    # P0 修复：绑定小组，避免同一用户跨组 AI 对话合并
+    group_id: Mapped[Optional[str]] = mapped_column(
+        String, index=True, nullable=True
+    )
     title: Mapped[str] = mapped_column(
         String(200), nullable=False, default="新对话"
     )

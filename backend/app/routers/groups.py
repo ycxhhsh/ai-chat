@@ -153,3 +153,84 @@ async def delete_group(
     await db.commit()
     return {"status": "deleted", "group_id": group_id}
 
+
+class GroupRename(BaseModel):
+    name: str
+
+
+@router.patch("/{group_id}", response_model=GroupResponse)
+async def rename_group(
+    group_id: str,
+    body: GroupRename,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """重命名小组（组内成员可操作）。"""
+    # 验证用户是组内成员
+    member = await db.execute(
+        select(GroupMember).where(
+            GroupMember.group_id == group_id,
+            GroupMember.user_id == str(user.user_id),
+        )
+    )
+    if not member.scalar_one_or_none():
+        raise HTTPException(status_code=403, detail="非小组成员")
+
+    result = await db.execute(select(Group).where(Group.id == group_id))
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="小组不存在")
+
+    group.name = body.name.strip()
+    db.add(group)
+    await db.commit()
+    await db.refresh(group)
+
+    return GroupResponse(
+        id=group.id,
+        name=group.name,
+        invite_code=group.invite_code,
+        created_by=group.created_by,
+        created_at=group.created_at.isoformat(),
+    )
+
+
+class MemberResponse(BaseModel):
+    user_id: str
+    name: str
+    role: str
+
+
+@router.get("/{group_id}/members", response_model=list[MemberResponse])
+async def list_group_members(
+    group_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """获取小组成员列表（组内成员可访问）。"""
+    # 验证调用者是组内成员
+    caller = await db.execute(
+        select(GroupMember).where(
+            GroupMember.group_id == group_id,
+            GroupMember.user_id == str(user.user_id),
+        )
+    )
+    if not caller.scalar_one_or_none():
+        raise HTTPException(status_code=403, detail="非小组成员")
+
+    result = await db.execute(
+        select(GroupMember, User)
+        .join(User, User.user_id == GroupMember.user_id)
+        .where(GroupMember.group_id == group_id)
+    )
+    rows = result.all()
+    return [
+        MemberResponse(
+            user_id=gm.user_id,
+            name=u.name,
+            role=gm.role,
+        )
+        for gm, u in rows
+    ]
+
+

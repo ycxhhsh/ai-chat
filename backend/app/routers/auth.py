@@ -126,3 +126,22 @@ async def change_password(
     db.add(user)
     await db.commit()
     return {"message": "密码修改成功"}
+
+
+@router.post("/refresh")
+async def refresh_token(
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """刷新 JWT token — 旧 token 有效时签发新 token。
+
+    前端应在旧 token 临近过期（< 30 分钟）时调用此接口。
+    """
+    new_token = create_access_token({
+        "sub": str(user.user_id),
+        "name": user.name,
+        "role": user.role,
+    })
+    return {
+        "access_token": new_token,
+        "user": _user_response(user),
+    }

@@ -194,3 +194,38 @@ async def run_bloom_analysis(
         "details": details[:20],
     }
 
+
+async def build_mindmap_depth_stats(db: AsyncSession) -> list[dict]:
+    """P1: 思维导图深度统计 — 每个小组的 AI 提取节点数。
+
+    通过统计 metadata_info 中 mindmap_node_count 字段近似推算。
+    """
+    try:
+        result = await db.execute(
+            select(
+                Message.session_id,
+                func.sum(
+                    func.coalesce(
+                        jq(Message.metadata_info, 'mindmap_node_count'),
+                        0,
+                    )
+                ).label("total_nodes"),
+                func.count().label("extraction_count"),
+            )
+            .where(
+                jq(Message.metadata_info, 'is_mindmap_extraction') == 'true'
+            )
+            .group_by(Message.session_id)
+        )
+        return [
+            {
+                "session_id": row.session_id,
+                "total_nodes": int(row.total_nodes or 0),
+                "extraction_count": row.extraction_count,
+            }
+            for row in result
+        ]
+    except Exception as e:
+        logger.warning("Mindmap depth stats failed: %s", e)
+        return []
+

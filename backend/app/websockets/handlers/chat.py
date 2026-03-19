@@ -175,6 +175,9 @@ async def handle_chat_send(
                 target_user=target_user,
                 scaffold_prompt=scaffold_prompt,
                 conversation_id=conversation_id,
+                quoted_text=metadata.get("quoted_text"),
+                is_deep_thinking=data.get("is_deep_thinking", False),
+                enable_search=data.get("enable_search", False),
             )
         )
 
@@ -267,14 +270,31 @@ async def _trigger_ai_reply(
     target_user: str | None,
     scaffold_prompt: str | None = None,
     conversation_id: str | None = None,
+    quoted_text: str | None = None,
+    is_deep_thinking: bool = False,
+    enable_search: bool = False,
 ) -> None:
     """触发 AI 回复 — 铁律 1+3：三明治上下文 + Redis 队列。"""
     from app.infra.ai_queue import get_queue
-    from app.llm.prompts import MENTOR_PROMPT, ASSISTANT_PROMPT
+    from app.llm.prompts import MENTOR_PROMPT, ASSISTANT_PROMPT, DEEP_THINK_INSTRUCTION
     from app.llm.context_builder import build_sandwich_context, load_pinned_file_text
 
     is_private = target_user == "ai"
     system_prompt = MENTOR_PROMPT if is_private else ASSISTANT_PROMPT
+
+    # P2: 深度思考模式 — 追加 CoT 指令
+    if is_deep_thinking:
+        system_prompt += DEEP_THINK_INSTRUCTION
+
+    # 追问引用：将被引用的文本作为上下文注入用户消息
+    effective_message = user_message
+    if quoted_text:
+        effective_message = (
+            f"【追问引用】学生选中了你之前回答中的以下片段进行追问，"
+            f"请重点审查并深入展开这部分内容：\n"
+            f"\"\"\"\n{quoted_text}\n\"\"\"\n\n"
+            f"学生的追问：{user_message}"
+        )
 
     # 加载学生上传的文件（Pinned 区锚定）
     uploaded_file_text = await load_pinned_file_text(session_id)
@@ -282,7 +302,7 @@ async def _trigger_ai_reply(
     # ── 铁律 3：三明治上下文组装 ──
     messages = await build_sandwich_context(
         session_id=session_id,
-        user_message=user_message,
+        user_message=effective_message,
         system_prompt=system_prompt,
         llm_provider=llm_provider,
         scaffold_prompt=scaffold_prompt,
@@ -304,6 +324,7 @@ async def _trigger_ai_reply(
             messages=messages,
             is_private=is_private,
             conversation_id=conversation_id,
+            enable_search=enable_search,
         )
         logger.info(
             "AI task %s queued for session=%s provider=%s",

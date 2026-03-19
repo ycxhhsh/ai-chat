@@ -10,6 +10,8 @@ from app.models.llm_provider import LLMProvider
 from app.models.course import Course, CourseEnrollment
 from app.models.ai_conversation import AiConversation
 from app.models.conversation_summary import ConversationSummary
+from app.models.job import Job
+from app.models.notification import Notification
 
 __all__ = [
     "Base",
@@ -27,5 +29,7 @@ __all__ = [
     "CourseEnrollment",
     "AiConversation",
     "ConversationSummary",
+    "Job",
+    "Notification",
 ]
 

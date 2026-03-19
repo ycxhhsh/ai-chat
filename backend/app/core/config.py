@@ -51,6 +51,9 @@ class Settings(BaseSettings):
         default=1024, alias="EMBEDDING_DIMENSIONS"
     )
 
+    # ── Web Search（Tavily） ──
+    search_api_key: str = Field(default="", alias="SEARCH_API_KEY")
+
     # ── LLM 并发与超时 ──
     llm_max_concurrency: int = Field(
         default=10, alias="LLM_MAX_CONCURRENCY"

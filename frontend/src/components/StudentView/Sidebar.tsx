@@ -7,6 +7,7 @@ import { useGroupStore } from '../../store/useGroupStore';
 import { useChatStore } from '../../store/useChatStore';
 import { useAiConversationStore } from '../../store/useAiConversationStore';
 import { ChangePasswordModal } from '../Auth/ChangePasswordModal';
+import { api } from '../../api';
 import {
     Users,
     MessageSquare,
@@ -21,10 +22,12 @@ import {
     Check,
     KeyRound,
     ChevronDown,
+    Pencil,
+    BookOpen,
 } from 'lucide-react';
 import clsx from 'clsx';
 
-type ChannelType = 'group' | 'ai' | 'assignment';
+type ChannelType = 'group' | 'ai' | 'materials' | 'assignment';
 
 interface Props {
     activeChannel: ChannelType;
@@ -44,7 +47,7 @@ function timeAgo(dateStr: string): string {
 
 export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => {
     const { user, logout } = useAuthStore();
-    const { groups, currentGroupId, fetchGroups, createGroup, joinGroup, deleteGroup, setCurrentGroup } = useGroupStore();
+    const { groups, currentGroupId, fetchGroups, createGroup, joinGroup, deleteGroup, renameGroup, setCurrentGroup } = useGroupStore();
     const {
         conversations,
         currentConversationId,
@@ -52,6 +55,7 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
         createConversation,
         selectConversation,
         deleteConversation,
+        updateTitle,
     } = useAiConversationStore();
 
     const [showCreateModal, setShowCreateModal] = useState(false);
@@ -64,6 +68,14 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
     const [showUserMenu, setShowUserMenu] = useState(false);
     const [showPasswordModal, setShowPasswordModal] = useState(false);
     const userMenuRef = useRef<HTMLDivElement>(null);
+
+    // Inline edit state
+    const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+    const [editingGroupName, setEditingGroupName] = useState('');
+    const [editingConvId, setEditingConvId] = useState<string | null>(null);
+    const [editingConvTitle, setEditingConvTitle] = useState('');
+    // Per-group copy feedback
+    const [copiedGroupId, setCopiedGroupId] = useState<string | null>(null);
 
     useEffect(() => {
         fetchGroups().catch(() => { });
@@ -139,9 +151,52 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
         }
     };
 
+    // ── Inline Edit: 小组名 ──
+    const handleGroupDoubleClick = (groupId: string, currentName: string) => {
+        setEditingGroupId(groupId);
+        setEditingGroupName(currentName);
+    };
+    const handleGroupRenameBlur = async () => {
+        if (editingGroupId && editingGroupName.trim()) {
+            try {
+                await renameGroup(editingGroupId, editingGroupName.trim());
+            } catch (e) {
+                console.error('Rename group failed:', e);
+            }
+        }
+        setEditingGroupId(null);
+    };
+
+    // ── Inline Edit: AI 对话名 ──
+    const handleConvDoubleClick = (convId: string, currentTitle: string) => {
+        setEditingConvId(convId);
+        setEditingConvTitle(currentTitle);
+    };
+    const handleConvRenameBlur = async () => {
+        if (editingConvId && editingConvTitle.trim()) {
+            try {
+                await api.aiConversations.rename(editingConvId, editingConvTitle.trim());
+                updateTitle(editingConvId, editingConvTitle.trim());
+            } catch (e) {
+                console.error('Rename conversation failed:', e);
+            }
+        }
+        setEditingConvId(null);
+    };
+
+    // ── 邀请码复制（带 ✓ 反馈） ──
+    const handleCopyGroupCode = (e: React.MouseEvent, code: string, groupId: string) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(code).then(() => {
+            setCopiedGroupId(groupId);
+            setTimeout(() => setCopiedGroupId(null), 2000);
+        });
+    };
+
     const channels: { type: ChannelType; icon: React.ElementType; label: string }[] = [
         { type: 'group', icon: MessageSquare, label: '小组讨论' },
         { type: 'ai', icon: Bot, label: 'AI 导师' },
+        { type: 'materials', icon: BookOpen, label: '资料' },
         { type: 'assignment', icon: FileText, label: '作业提交' },
     ];
 
@@ -244,12 +299,35 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
                                     )}
                                 >
                                     <div className="flex-1 min-w-0">
-                                        <p className={clsx(
-                                            'text-sm truncate',
-                                            c.conversation_id === currentConversationId && 'font-medium'
-                                        )}>
-                                            {c.title}
-                                        </p>
+                                        {editingConvId === c.conversation_id ? (
+                                            <input
+                                                type="text"
+                                                value={editingConvTitle}
+                                                onChange={(e) => setEditingConvTitle(e.target.value)}
+                                                onBlur={handleConvRenameBlur}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') handleConvRenameBlur();
+                                                    if (e.key === 'Escape') setEditingConvId(null);
+                                                }}
+                                                onClick={(e) => e.stopPropagation()}
+                                                className="w-full text-sm bg-white border border-blue-300 rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-blue-400"
+                                                autoFocus
+                                            />
+                                        ) : (
+                                            <p
+                                                className={clsx(
+                                                    'text-sm truncate',
+                                                    c.conversation_id === currentConversationId && 'font-medium'
+                                                )}
+                                                onDoubleClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleConvDoubleClick(c.conversation_id, c.title);
+                                                }}
+                                                title="双击编辑名称"
+                                            >
+                                                {c.title}
+                                            </p>
+                                        )}
                                         <p className="text-[10px] text-gray-400 mt-0.5">
                                             {timeAgo(c.updated_at)}
                                             {c.message_count > 0 && ` · ${c.message_count}条`}
@@ -319,45 +397,79 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
                                         >
                                             <Users className="w-4 h-4 text-gray-400 shrink-0" />
                                             <div className="flex-1 min-w-0">
-                                                <span className={clsx(
-                                                    'text-sm truncate block',
-                                                    g.id === currentGroupId ? 'text-gray-900 font-medium' : 'text-gray-600'
-                                                )}>
-                                                    {g.name}
-                                                </span>
+                                                {editingGroupId === g.id ? (
+                                                    <input
+                                                        type="text"
+                                                        value={editingGroupName}
+                                                        onChange={(e) => setEditingGroupName(e.target.value)}
+                                                        onBlur={handleGroupRenameBlur}
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') handleGroupRenameBlur();
+                                                            if (e.key === 'Escape') setEditingGroupId(null);
+                                                        }}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        className="w-full text-sm bg-white border border-blue-300 rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-blue-400"
+                                                        autoFocus
+                                                    />
+                                                ) : (
+                                                    <span
+                                                        className={clsx(
+                                                            'text-sm truncate block',
+                                                            g.id === currentGroupId ? 'text-gray-900 font-medium' : 'text-gray-600'
+                                                        )}
+                                                        onDoubleClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleGroupDoubleClick(g.id, g.name);
+                                                        }}
+                                                        title="双击编辑名称"
+                                                    >
+                                                        {g.name}
+                                                    </span>
+                                                )}
                                                 <span className="text-[10px] text-gray-400 flex items-center gap-1 mt-0.5">
                                                     邀请码:
                                                     <code className="bg-gray-100 px-1 py-0.5 rounded font-mono text-indigo-500 select-all">
                                                         {g.invite_code}
                                                     </code>
                                                     <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            navigator.clipboard.writeText(g.invite_code);
-                                                        }}
+                                                        onClick={(e) => handleCopyGroupCode(e, g.invite_code, g.id)}
                                                         className="p-0.5 text-gray-300 hover:text-indigo-500 transition-colors"
                                                         title="复制邀请码"
                                                     >
-                                                        <Copy className="w-3 h-3" />
+                                                        {copiedGroupId === g.id
+                                                            ? <Check className="w-3 h-3 text-green-500" />
+                                                            : <Copy className="w-3 h-3" />}
                                                     </button>
                                                 </span>
                                             </div>
                                             {isCreator && (
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        if (confirm(`确定删除小组「${g.name}」？此操作不可恢复。`)) {
-                                                            deleteGroup(g.id).catch(err => {
-                                                                console.error('Delete group failed:', err);
-                                                                alert('删除失败');
-                                                            });
-                                                        }
-                                                    }}
-                                                    className="opacity-0 group-hover:opacity-100 p-1 text-gray-300 hover:text-red-500 rounded transition-all shrink-0"
-                                                    title="删除小组"
-                                                >
-                                                    <Trash2 className="w-3.5 h-3.5" />
-                                                </button>
+                                                <>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleGroupDoubleClick(g.id, g.name);
+                                                        }}
+                                                        className="opacity-0 group-hover:opacity-100 p-1 text-gray-300 hover:text-blue-500 rounded transition-all shrink-0"
+                                                        title="重命名小组"
+                                                    >
+                                                        <Pencil className="w-3.5 h-3.5" />
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            if (confirm(`确定删除小组「${g.name}」？此操作不可恢复。`)) {
+                                                                deleteGroup(g.id).catch(err => {
+                                                                    console.error('Delete group failed:', err);
+                                                                    alert('删除失败');
+                                                                });
+                                                            }
+                                                        }}
+                                                        className="opacity-0 group-hover:opacity-100 p-1 text-gray-300 hover:text-red-500 rounded transition-all shrink-0"
+                                                        title="删除小组"
+                                                    >
+                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                    </button>
+                                                </>
                                             )}
                                         </button>
                                     </div>

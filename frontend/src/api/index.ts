@@ -10,9 +10,9 @@ const http = axios.create({
     baseURL: window.location.origin,
 });
 
-// 请求拦截器：自动附带 token
+// P0 修复：token 存储根据"记住我"选项使用 localStorage 或 sessionStorage
 http.interceptors.request.use((config) => {
-    const token = sessionStorage.getItem('cothink-token');
+    const token = localStorage.getItem('cothink-token') || sessionStorage.getItem('cothink-token');
     if (token) {
         config.headers.Authorization = `Bearer ${token}`;
     }
@@ -25,8 +25,8 @@ http.interceptors.response.use(
     (error) => {
         if (error.response?.status === 401) {
             console.warn('[API] 401 Unauthorized — clearing auth and redirecting');
-            sessionStorage.removeItem('cothink-token');
-            sessionStorage.removeItem('cothink-auth');
+            localStorage.removeItem('cothink-token');
+            localStorage.removeItem('cothink-auth');
             if (!window.location.pathname.includes('/login')) {
                 window.location.href = '/login';
             }
@@ -58,6 +58,10 @@ export const api = {
             const res = await http.get('/auth/me');
             return res.data;
         },
+        refresh: async () => {
+            const res = await http.post('/auth/refresh');
+            return res.data;
+        },
     },
 
     groups: {
@@ -76,6 +80,14 @@ export const api = {
         delete: async (groupId: string) => {
             const res = await http.delete(`/groups/${groupId}`);
             return res.data;
+        },
+        rename: async (groupId: string, name: string) => {
+            const res = await http.patch(`/groups/${groupId}`, { name });
+            return res.data;
+        },
+        members: async (groupId: string) => {
+            const res = await http.get(`/groups/${groupId}/members`);
+            return res.data as { user_id: string; name: string; role: string }[];
         },
     },
 
@@ -112,6 +124,41 @@ export const api = {
         },
         review: async (assignmentId: string, score: number | null, comment: string | null) => {
             const res = await http.patch(`/assignments/${assignmentId}/review`, { score, comment });
+            return res.data;
+        },
+    },
+
+    // P3: Jobs & Notifications
+    jobs: {
+        create: async (data: { type: string; title: string; input_data?: Record<string, unknown>; llm_provider?: string; session_id?: string }) => {
+            const res = await http.post('/jobs', data);
+            return res.data;
+        },
+        list: async () => {
+            const res = await http.get('/jobs');
+            return res.data;
+        },
+        get: async (jobId: string) => {
+            const res = await http.get(`/jobs/${jobId}`);
+            return res.data;
+        },
+    },
+
+    notifications: {
+        list: async () => {
+            const res = await http.get('/notifications');
+            return res.data;
+        },
+        unreadCount: async () => {
+            const res = await http.get('/notifications/unread-count');
+            return res.data;
+        },
+        markRead: async (id: string) => {
+            const res = await http.patch(`/notifications/${id}/read`);
+            return res.data;
+        },
+        markAllRead: async () => {
+            const res = await http.patch('/notifications/read-all');
             return res.data;
         },
     },
@@ -174,6 +221,34 @@ export const api = {
             });
             return res.data;
         },
+        groups: async () => {
+            const res = await http.get('/teacher/groups');
+            return res.data;
+        },
+        removeGroupMember: async (groupId: string, userId: string) => {
+            const res = await http.delete(`/teacher/groups/${groupId}/members/${userId}`);
+            return res.data;
+        },
+        transferGroupMember: async (groupId: string, userId: string, targetGroupId: string) => {
+            const res = await http.post(`/teacher/groups/${groupId}/members/${userId}/transfer`, { target_group_id: targetGroupId });
+            return res.data;
+        },
+        renameGroup: async (groupId: string, name: string) => {
+            const res = await http.patch(`/teacher/groups/${groupId}`, { name });
+            return res.data;
+        },
+        deleteGroup: async (groupId: string) => {
+            const res = await http.delete(`/teacher/groups/${groupId}`);
+            return res.data;
+        },
+        getScaffoldSuggestEnabled: async (): Promise<{ enabled: boolean }> => {
+            const res = await http.get('/teacher/settings/scaffold-suggest');
+            return res.data;
+        },
+        setScaffoldSuggestEnabled: async (enabled: boolean) => {
+            const res = await http.put('/teacher/settings/scaffold-suggest', { enabled });
+            return res.data;
+        },
     },
 
     knowledge: {
@@ -203,14 +278,17 @@ export const api = {
     },
 
     aiConversations: {
-        list: async () => {
-            const res = await http.get('/ai-conversations');
+        list: async (groupId?: string) => {
+            const params: Record<string, string> = {};
+            if (groupId) params.group_id = groupId;
+            const res = await http.get('/ai-conversations', { params });
             return res.data;
         },
-        create: async (llmProvider?: string) => {
+        create: async (llmProvider?: string, groupId?: string) => {
             const res = await http.post('/ai-conversations', {
                 title: '新对话',
                 llm_provider: llmProvider || null,
+                group_id: groupId || null,
             });
             return res.data;
         },

@@ -144,15 +144,22 @@ class ConnectionManager:
         message: str,
         exclude: WebSocket | None = None,
     ) -> None:
-        """纯本地广播（不经过 Redis）。"""
-        for ws in list(self._connections.get(session_id, [])):
-            if ws is exclude:
-                continue
+        """并发本地广播（不经过 Redis）。"""
+        targets = [
+            ws for ws in self._connections.get(session_id, [])
+            if ws is not exclude
+        ]
+        if not targets:
+            return
+
+        async def _safe_send(ws: WebSocket) -> None:
             try:
                 await ws.send_text(message)
             except Exception:
                 logger.warning("Failed to send to WS, removing")
                 self.disconnect(ws)
+
+        await asyncio.gather(*[_safe_send(ws) for ws in targets])
 
     async def send_to_user(
         self,

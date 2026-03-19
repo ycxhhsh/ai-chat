@@ -98,38 +98,66 @@ async def build_sandwich_context(
 
     pinned_tokens = estimate_messages_tokens(messages)
 
-    # 1d. 跨窗口对话摘要（轻量跨会话记忆）
-    if user_id:
+    # 1d. 跨窗口对话摘要（仅在学生主动询问时注入）
+    _SUMMARY_TRIGGER_KEYWORDS = (
+        "之前聊", "之前讨论", "聊过什么", "讨论过什么",
+        "用户画像", "学习画像", "我的画像",
+        "记得我", "还记得", "记不记得",
+        "上次说", "上次聊", "以前的对话",
+        "历史对话", "对话记录",
+    )
+    needs_summary = user_id and any(
+        kw in user_message for kw in _SUMMARY_TRIGGER_KEYWORDS
+    )
+    if needs_summary:
         try:
             from app.services.summary_service import load_user_summaries
             summaries = await load_user_summaries(
-                user_id, limit=10,
+                user_id, limit=3,
                 exclude_conversation_id=conversation_id,
             )
             if summaries:
                 summary_text = "\n".join(
-                    f"[历史对话{i+1}] {s}" for i, s in enumerate(summaries)
+                    f"- {s}" for s in summaries
                 )
                 messages.append({
-                    "role": "system",
-                    "content": f"=== 该学生此前讨论摘要 ===\n{summary_text}",
+                    "role": "user",
+                    "content": (
+                        "[系统备忘] 学生正在询问此前的学习记录。"
+                        "以下是该学生其他对话的摘要，仅供参考。"
+                        "如果学生否认某话题，以学生当前陈述为准。\n"
+                        f"{summary_text}"
+                    ),
+                })
+                messages.append({
+                    "role": "assistant",
+                    "content": "好的，我找到了你此前的一些学习记录。",
                 })
                 pinned_tokens = estimate_messages_tokens(messages)
         except Exception as e:
             logger.warning("Cross-conversation summary injection failed: %s", e)
 
     # ═══════════════════════════════════════════
-    # 第 2 层：RAG（动态检索切片）
+    # 第 2 层：RAG（动态检索切片）— 仅 AI 私聊时注入
     # ═══════════════════════════════════════════
 
     rag_tokens = 0
-    rag_budget = int(token_limit * 0.2)  # 最多 20% 给 RAG
+    is_private_chat = conversation_id is not None
+    rag_budget = int(token_limit * 0.10)  # 最多 10% 给 RAG（降低知识库权重）
 
-    rag_context = await _safe_rag_context(user_message)
+    # 小组讨论不注入 RAG，避免教材内容干扰自然讨论
+    if is_private_chat:
+        rag_context = await _safe_rag_context(user_message)
+    else:
+        rag_context = None
+
     if rag_context:
         rag_msg = {
             "role": "system",
-            "content": f"### 教师教材相关检索片段：\n{rag_context}",
+            "content": (
+                "### 教师教材相关检索片段（仅供参考，不要让教材内容主导回复）：\n"
+                f"{rag_context}"
+            ),
         }
         rag_tokens = estimate_tokens(rag_msg["content"])
         if rag_tokens <= rag_budget:
@@ -140,7 +168,7 @@ async def build_sandwich_context(
             messages.append({
                 "role": "system",
                 "content": (
-                    f"### 教师教材相关检索片段：\n"
+                    "### 教师教材相关检索片段（仅供参考，不要让教材内容主导回复）：\n"
                     f"{rag_context[:max_chars]}\n[因篇幅限制已截断]"
                 ),
             })
@@ -155,8 +183,49 @@ async def build_sandwich_context(
     history_budget = token_limit - pinned_tokens - rag_tokens - current_msg_tokens
     history_budget = max(0, history_budget)
 
-    # 加载历史消息
-    history = await _load_recent_messages(session_id, limit=max_history)
+    # 加载历史消息（AI 私聊按 conversation_id 隔离，小组按 session_id）
+    history = await _load_recent_messages(
+        session_id, limit=max_history, conversation_id=conversation_id,
+    )
+
+    # ── P1: 长对话自动压缩（>20 条时压缩前半部分为摘要） ──
+    COMPRESS_THRESHOLD = 20
+    if len(history) > COMPRESS_THRESHOLD:
+        half = len(history) // 2
+        old_msgs = history[:half]
+        history = history[half:]  # 保留较新的一半
+
+        compress_lines = []
+        for m in old_msgs:
+            sender = m.sender if isinstance(m.sender, dict) else {}
+            role_tag = (
+                "AI" if sender.get("role") == "ai"
+                else sender.get("name", "学生")
+            )
+            compress_lines.append(f"[{role_tag}] {m.content[:100]}")
+        compress_text = "\n".join(compress_lines)
+
+        try:
+            from app.llm.factory import get_llm_client as _get_compress_client
+            _c = _get_compress_client("deepseek")
+            _summary = await _c.chat(
+                messages=[{
+                    "role": "user",
+                    "content": f"用2-3句话总结以下对话要点：\n{compress_text}",
+                }],
+                max_tokens=150,
+            )
+            messages.append({
+                "role": "system",
+                "content": f"[早期对话摘要] {_summary.strip()}",
+            })
+            pinned_tokens = estimate_messages_tokens(messages)
+            logger.info(
+                "Long conversation compressed: %d msgs → summary (%d chars)",
+                len(old_msgs), len(_summary),
+            )
+        except Exception as e:
+            logger.warning("Long conversation compression failed: %s", e)
 
     # 从最新往最旧装填，超预算就停止
     history_messages: list[dict[str, str]] = []
@@ -208,18 +277,38 @@ async def _safe_rag_context(query: str) -> Optional[str]:
         return None
 
 
-async def _load_recent_messages(session_id: str, limit: int = 50) -> list:
-    """从数据库加载最近 N 条消息作为对话上下文。"""
+async def _load_recent_messages(
+    session_id: str,
+    limit: int = 50,
+    conversation_id: str | None = None,
+) -> list:
+    """从数据库加载最近 N 条消息作为对话上下文。
+
+    AI 私聊时按 conversation_id 过滤（防止跨对话泄漏），
+    小组讨论按 session_id 过滤。
+    """
     try:
         from app.db.session import AsyncSessionLocal
         from app.models.message import Message
         from sqlalchemy import select
 
         async with AsyncSessionLocal() as db:
+            query = select(Message)
+
+            if conversation_id:
+                # AI 私聊：严格按对话 ID 隔离
+                query = query.where(
+                    Message.conversation_id == conversation_id
+                )
+            else:
+                # 小组讨论：按 session_id，排除 AI 私聊消息
+                query = query.where(
+                    Message.session_id == session_id,
+                    Message.conversation_id.is_(None),
+                )
+
             result = await db.execute(
-                select(Message)
-                .where(Message.session_id == session_id)
-                .order_by(Message.created_at.desc())
+                query.order_by(Message.created_at.desc())
                 .limit(limit)
             )
             msgs = result.scalars().all()

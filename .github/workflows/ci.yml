@@ -1,8 +1,13 @@
-name: CI
+name: CI/CD
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
+  # ── 后端 Lint + 单元测试 ──
   backend-lint:
     runs-on: ubuntu-latest
     steps:
@@ -15,6 +20,46 @@ jobs:
       - run: cd backend && ruff check .
       - run: cd backend && pytest tests/unit/ -v --tb=short
 
+  # ── 后端集成测试（需要 PostgreSQL + Redis） ──
+  backend-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: cothink_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:password@localhost:5432/cothink_test
+      REDIS_URL: redis://localhost:6379
+      SECRET_KEY: test-secret-key-for-ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r backend/requirements.txt
+      - run: pip install pytest pytest-asyncio httpx
+      - run: cd backend && pytest tests/integration/ -v --tb=short
+
+  # ── 前端构建 ──
   frontend-build:
     runs-on: ubuntu-latest
     steps:
@@ -24,3 +69,57 @@ jobs:
           node-version: "20"
       - run: cd frontend && npm ci
       - run: cd frontend && npm run build
+
+  # ── 自动部署（仅 main push 时触发） ──
+  deploy:
+    needs: [backend-lint, backend-integration, frontend-build]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # 构建前端
+      - name: Build frontend
+        run: cd frontend && npm ci && npm run build
+
+      # 配置 SSH
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      # 部署前端 dist
+      - name: Deploy frontend
+        run: |
+          ssh -i ~/.ssh/id_ed25519 root@${{ secrets.SERVER_IP }} "rm -rf /opt/cothink/frontend/dist"
+          scp -i ~/.ssh/id_ed25519 -r frontend/dist root@${{ secrets.SERVER_IP }}:/opt/cothink/frontend/dist
+
+      # 部署后端
+      - name: Deploy backend
+        run: |
+          tar -czf /tmp/backend.tar.gz -C backend \
+            --exclude='__pycache__' --exclude='*.pyc' --exclude='.env' \
+            --exclude='.venv' --exclude='tests' .
+          scp -i ~/.ssh/id_ed25519 /tmp/backend.tar.gz root@${{ secrets.SERVER_IP }}:/tmp/backend.tar.gz
+          ssh -i ~/.ssh/id_ed25519 root@${{ secrets.SERVER_IP }} \
+            "cd /opt/cothink/backend && tar -xzf /tmp/backend.tar.gz && rm /tmp/backend.tar.gz"
+
+      # 重建后端 Docker 并重启
+      - name: Restart services
+        run: |
+          ssh -i ~/.ssh/id_ed25519 root@${{ secrets.SERVER_IP }} \
+            "cd /opt/cothink && docker compose build backend && docker compose up -d --force-recreate backend ai-worker grading-worker"
+
+      # 健康检查
+      - name: Health check
+        run: |
+          sleep 15
+          STATUS=$(ssh -i ~/.ssh/id_ed25519 root@${{ secrets.SERVER_IP }} \
+            "curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/healthz")
+          echo "Health check status: $STATUS"
+          [ "$STATUS" = "200" ] || exit 1

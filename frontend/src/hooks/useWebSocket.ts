@@ -9,7 +9,7 @@
  * - SESSION_JOINED 初始化支架 + 历史消息
  * - CHAT_ACK 消息确认
  */
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuthStore } from '../store/useAuthStore';
 import { useChatStore } from '../store/useChatStore';
 import { useScaffoldStore } from '../store/useScaffoldStore';
@@ -17,15 +17,16 @@ import { useMindMapStore } from '../store/useMindMapStore';
 import type { ChatMessage } from '../types';
 import { generateUUID } from '../utils/uuid';
 
-// 心跳配置
-const HEARTBEAT_TIMEOUT = 60_000;  // 60 秒内没收到 PING 视为断连（宽松值，避免 LLM 繁忙时误断）
+// 心跳配置 — 配合后端 15s 间隔，45s 未收到 PING 即视为断连
+const HEARTBEAT_TIMEOUT = 45_000;
 
-// 重连配置
-const RECONNECT_BASE_MS = 1_000;
-const RECONNECT_MAX_MS = 30_000;
+// 重连配置 — 首次重连 500ms，减少感知延迟
+const RECONNECT_BASE_MS = 500;
+const RECONNECT_MAX_MS = 15_000;
 
 export function useWebSocket(sessionId: string | null) {
     const wsRef = useRef<WebSocket | null>(null);
+    const [connectionState, setConnectionState] = useState<'connected' | 'connecting' | 'disconnected'>('disconnected');
     const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const heartbeatTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const reconnectAttemptRef = useRef(0);
@@ -39,12 +40,13 @@ export function useWebSocket(sessionId: string | null) {
         addGroupMessage,
         addAiMessage,
         setGroupMessages,
-        setAiMessages,
         setAiTyping,
         appendAiStream,
         resetAiStream,
         setAvailableProviders,
         updateMessageStatus,
+        setScaffoldSuggestion,
+        setSearchSources,
     } = useChatStore();
 
     const { updateScaffoldState, setScaffolds, handleScaffoldDisabled } = useScaffoldStore();
@@ -101,6 +103,7 @@ export function useWebSocket(sessionId: string | null) {
                 }
                 // P0-2: 消息处理 — 区分首次连接和重连
                 if (data.recent_messages && Array.isArray(data.recent_messages)) {
+                    const currentSessionId = data.session_id as string || sessionId || '';
                     const msgs = data.recent_messages as ChatMessage[];
                     const groupMsgs: ChatMessage[] = [];
                     const aiMsgs: ChatMessage[] = [];
@@ -116,12 +119,14 @@ export function useWebSocket(sessionId: string | null) {
                     }
                     if (isReconnectRef.current && msgs.length > 0) {
                         // 重连：增量追加（游标之后的新消息）
-                        for (const m of groupMsgs) addGroupMessage(m);
+                        for (const m of groupMsgs) addGroupMessage(currentSessionId, m);
                         for (const m of aiMsgs) addAiMessage(m);
                     } else {
-                        // 首次连接：全量替换
-                        setGroupMessages(groupMsgs);
-                        setAiMessages(aiMsgs);
+                        // P0 修复：首次连接时也预填小组消息（来自后端 recent_messages）
+                        if (groupMsgs.length > 0) {
+                            setGroupMessages(currentSessionId, groupMsgs);
+                        }
+                        // AI 消息由 StudentView 按 currentConversationId 加载
                     }
                     // 更新游标到最后一条消息的时间
                     if (msgs.length > 0) {
@@ -145,7 +150,9 @@ export function useWebSocket(sessionId: string | null) {
                 if (isAiPrivate) {
                     addAiMessage(msg);
                 } else {
-                    addGroupMessage(msg);
+                    // P0 修复：传入 sessionId 用于分片存储
+                    const msgSessionId = msg.session_id || sessionId || '';
+                    addGroupMessage(msgSessionId, msg);
                 }
                 break;
             }
@@ -187,7 +194,8 @@ export function useWebSocket(sessionId: string | null) {
                 if (data.is_private) {
                     addAiMessage(doneMsg);
                 } else {
-                    addGroupMessage(doneMsg);
+                    const doneSessionId = (data.session_id as string) || sessionId || '';
+                    addGroupMessage(doneSessionId, doneMsg);
                 }
                 resetAiStream();
                 break;
@@ -214,6 +222,24 @@ export function useWebSocket(sessionId: string | null) {
                             data.is_active as boolean,
                         );
                     }
+                }
+                break;
+
+            case 'SCAFFOLD_SUGGEST':
+                // P2: AI 判断学生需要时的支架建议
+                if (data.scaffolds) {
+                    setScaffoldSuggestion({
+                        scaffolds: data.scaffolds as { scaffold_id: string; label: string; content: string }[],
+                        recommendedIndex: (data.recommended_index as number) || 0,
+                        learningState: (data.learning_state as string) || 'exploring',
+                    });
+                }
+                break;
+
+            case 'WEB_SEARCH_RESULT':
+                // P3: 搜索来源展示
+                if (data.sources) {
+                    setSearchSources(data.sources as { title: string; url: string; content: string }[]);
                 }
                 break;
 
@@ -280,7 +306,15 @@ export function useWebSocket(sessionId: string | null) {
     }, [resetHeartbeatTimeout]);
 
     const connect = useCallback(() => {
-        if (!sessionId || !token || wsRef.current) return;
+        // 清理残留连接后再建新连接
+        if (wsRef.current) {
+            if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) {
+                return; // 已有正常连接，不重复创建
+            }
+            // 连接已关闭/半关闭，清理引用
+            wsRef.current = null;
+        }
+        if (!sessionId || !token) return;
 
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         let url = `${protocol}//${window.location.host}/ws/${sessionId}?token=${token}`;
@@ -291,10 +325,12 @@ export function useWebSocket(sessionId: string | null) {
         } else {
             isReconnectRef.current = false;
         }
+        setConnectionState('connecting');
         const ws = new WebSocket(url);
 
         ws.onopen = () => {
             console.log('[WS] Connected:', sessionId);
+            setConnectionState('connected');
             reconnectAttemptRef.current = 0; // 重置重连计数
             startHeartbeat();
         };
@@ -312,6 +348,7 @@ export function useWebSocket(sessionId: string | null) {
             console.log('[WS] Closed:', e.code, e.reason);
             wsRef.current = null;
             stopHeartbeat();
+            setConnectionState('disconnected');
 
             // P0-4: 断开时不清空聊天记录（注意：不调用 clearMessages）
 
@@ -341,6 +378,8 @@ export function useWebSocket(sessionId: string | null) {
             wsRef.current.send(JSON.stringify({ event, data }));
         } else {
             console.warn('[WS] Not connected, cannot send:', event);
+            // 自动触发重连
+            connect();
             // 用户可见提示
             const toast = document.createElement('div');
             toast.textContent = '⚠️ 连接已断开，正在重连...';
@@ -348,7 +387,7 @@ export function useWebSocket(sessionId: string | null) {
             document.body.appendChild(toast);
             setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 3000);
         }
-    }, []);
+    }, [connect]);
 
     const disconnect = useCallback(() => {
         stopHeartbeat();
@@ -368,5 +407,20 @@ export function useWebSocket(sessionId: string | null) {
         return () => disconnect();
     }, [connect, disconnect]);
 
-    return { send, disconnect, isConnected: !!wsRef.current };
+    // 页面恢复可见时检查连接状态并重连
+    useEffect(() => {
+        const handleVisibility = () => {
+            if (document.visibilityState === 'visible') {
+                // 页面从后台恢复，检查 WS 连接是否还活着
+                if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+                    console.log('[WS] Page visible, connection lost, reconnecting...');
+                    connect();
+                }
+            }
+        };
+        document.addEventListener('visibilitychange', handleVisibility);
+        return () => document.removeEventListener('visibilitychange', handleVisibility);
+    }, [connect]);
+
+    return { send, disconnect, isConnected: connectionState === 'connected', connectionState };
 }

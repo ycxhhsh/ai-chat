@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# 心跳间隔（秒）
-_HEARTBEAT_INTERVAL = 25
+# 心跳间隔（秒）—— 降低到 15s 减少心跳延迟
+_HEARTBEAT_INTERVAL = 15
 # Pong 超时（秒）
 _PONG_TIMEOUT = 10
 

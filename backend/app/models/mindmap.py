@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, Integer, String, JSON
 from sqlalchemy.orm import Mapped, mapped_column
+from typing import Optional
 
 from app.models.base import Base
 
@@ -42,4 +43,10 @@ class MindMap(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+    )
+    # 增量生成：上次处理的最新消息时间戳
+    last_processed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
     )

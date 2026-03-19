@@ -24,6 +24,9 @@ class Document(Base):
     source_file: Mapped[str] = mapped_column(
         String, nullable=False, index=True
     )
+    file_url: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

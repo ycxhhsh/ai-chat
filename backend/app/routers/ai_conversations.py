@@ -25,6 +25,7 @@ class ConversationOut(BaseModel):
     title: str
     llm_provider: str | None = None
     message_count: int = 0
+    group_id: str | None = None
     created_at: str
     updated_at: str
 
@@ -32,6 +33,7 @@ class ConversationOut(BaseModel):
 class CreateConversationReq(BaseModel):
     title: str = Field(default="新对话", max_length=200)
     llm_provider: str | None = None
+    group_id: str | None = None
 
 
 class UpdateTitleReq(BaseModel):
@@ -44,13 +46,20 @@ class UpdateTitleReq(BaseModel):
 async def list_conversations(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    group_id: str | None = None,
 ):
-    """列出当前用户的所有 AI 对话，按最近活跃倒序。"""
-    result = await db.execute(
+    """列出当前用户的所有 AI 对话，按最近活跃倒序。
+
+    可选 group_id 参数：有值时仅返回该小组下的对话。
+    """
+    query = (
         select(AiConversation)
         .where(AiConversation.user_id == user.user_id)
-        .order_by(AiConversation.updated_at.desc())
     )
+    if group_id is not None:
+        query = query.where(AiConversation.group_id == group_id)
+    query = query.order_by(AiConversation.updated_at.desc())
+    result = await db.execute(query)
     convos = result.scalars().all()
     return [
         ConversationOut(
@@ -58,6 +67,7 @@ async def list_conversations(
             title=c.title,
             llm_provider=c.llm_provider,
             message_count=c.message_count,
+            group_id=c.group_id,
             created_at=c.created_at.isoformat() if c.created_at else "",
             updated_at=c.updated_at.isoformat() if c.updated_at else "",
         )
@@ -78,6 +88,7 @@ async def create_conversation(
         user_id=user.user_id,
         title=req.title,
         llm_provider=req.llm_provider,
+        group_id=req.group_id,
         message_count=0,
         created_at=now,
         updated_at=now,
@@ -91,6 +102,7 @@ async def create_conversation(
         title=convo.title,
         llm_provider=convo.llm_provider,
         message_count=0,
+        group_id=convo.group_id,
         created_at=convo.created_at.isoformat(),
         updated_at=convo.updated_at.isoformat(),
     )

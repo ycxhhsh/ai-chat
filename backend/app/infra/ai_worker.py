@@ -77,6 +77,7 @@ async def execute_ai_task(
     try:
         client = get_llm_client(llm_provider)
         full_content = ""
+        search_sources: list[dict] = []
 
         # 通知 AI 开始
         await publish_event("AI_TYPING", {
@@ -84,6 +85,64 @@ async def execute_ai_task(
             "provider": llm_provider,
             "task_id": task_id,
         })
+
+        # ── 注入对话轮数上下文（渐进收敛策略） ──
+        user_msg_count = sum(
+            1 for m in messages
+            if m.get("role") == "user"
+            and not m.get("content", "").startswith("[系统备忘]")
+        )
+        if user_msg_count > 0:
+            round_hint = {
+                "role": "system",
+                "content": (
+                    f"[内部上下文] 当前对话已进行 {user_msg_count} 轮"
+                    "用户提问。请根据渐进收敛策略调整回复风格。"
+                ),
+            }
+            messages = list(messages)
+            messages.insert(1, round_hint)
+
+        # ── P3: 联网搜索环节 ──
+        enable_search = task.get("enable_search", False)
+        user_message = task.get("user_message", "")
+        if enable_search and user_message:
+            try:
+                from app.services.search_intent import check_search_intent
+                from app.services.web_search import web_search
+
+                intent = await check_search_intent(user_message, llm_provider)
+                if intent.get("needs_search"):
+                    search_query = intent.get("query", user_message[:100])
+                    search_sources = await web_search(search_query, max_results=3)
+                    if search_sources:
+                        # 将搜索结果注入 messages（插入到 user message 之前）
+                        search_text = "\n\n".join(
+                            f"[{i+1}] {r['title']}\n{r['content']}\n来源: {r['url']}"
+                            for i, r in enumerate(search_sources)
+                        )
+                        search_msg = {
+                            "role": "system",
+                            "content": (
+                                "### 联网搜索结果（请优先参考以下实时信息回答）：\n"
+                                f"{search_text}"
+                            ),
+                        }
+                        # 插入到倒数第二个位置（user message 之前）
+                        messages = list(messages)
+                        messages.insert(-1, search_msg)
+
+                        # 推送搜索来源到前端
+                        await publish_event("WEB_SEARCH_RESULT", {
+                            "task_id": task_id,
+                            "sources": search_sources,
+                        })
+                        logger.info(
+                            "Web search injected %d results for task %s",
+                            len(search_sources), task_id,
+                        )
+            except Exception as e:
+                logger.warning("Web search step failed: %s", e)
 
         # 流式调用 LLM
         try:
@@ -129,6 +188,64 @@ async def execute_ai_task(
             "Task %s completed: provider=%s, chars=%d",
             task_id, llm_provider, len(full_content),
         )
+
+        # ── P2: 异步触发支架智能推送 ──
+        user_message = task.get("user_message", "")
+        if is_private and user_message and full_content:
+            try:
+                # 检查教师端开关
+                scaffold_enabled = True
+                try:
+                    from app.infra.redis_client import is_available, get_redis
+                    if is_available():
+                        pool = get_redis()
+                        if pool:
+                            val = await pool.get(
+                                "cothink:config:scaffold_suggest_enabled"
+                            )
+                            if val is not None:
+                                scaffold_enabled = str(val).lower() != "false"
+                except Exception:
+                    pass  # Redis 不可用时默认启用
+
+                if scaffold_enabled:
+                    # 从数据库加载活跃支架
+                    from app.db.session import AsyncSessionLocal
+                    from app.models.scaffold import Scaffold
+                    from sqlalchemy import select
+
+                    scaffolds_for_suggest = []
+                    async with AsyncSessionLocal() as db:
+                        result = await db.execute(
+                            select(Scaffold)
+                            .where(Scaffold.is_active == True)  # noqa: E712
+                            .order_by(Scaffold.sort_order)
+                        )
+                        scaffolds_for_suggest = [
+                            {
+                                "scaffold_id": str(s.scaffold_id),
+                                "display_name": s.display_name,
+                                "prompt_template": s.prompt_template,
+                            }
+                            for s in result.scalars().all()
+                        ]
+
+                    if scaffolds_for_suggest:
+                        from app.services.scaffold_suggest import (
+                            generate_scaffold_suggestion,
+                        )
+                        suggestion = await generate_scaffold_suggestion(
+                            user_message, full_content,
+                            scaffolds_for_suggest, llm_provider,
+                        )
+                        if suggestion:
+                            await publish_event("SCAFFOLD_SUGGEST", {
+                                "task_id": task_id,
+                                "session_id": session_id,
+                                **suggestion,
+                            })
+            except Exception as e:
+                logger.warning("Scaffold suggestion failed: %s", e)
 
     except Exception as e:
         logger.exception("Task %s failed: %s", task_id, e)

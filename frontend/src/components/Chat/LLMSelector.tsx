@@ -1,7 +1,8 @@
 /**
  * LLM 模型选择器组件。
+ * P1: 初始化时读取教师设置的默认 Provider。
  */
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useChatStore } from '../../store/useChatStore';
 import { ChevronDown } from 'lucide-react';
 
@@ -11,6 +12,18 @@ export const LLMSelector: React.FC = () => {
         availableProviders,
         setSelectedProvider,
     } = useChatStore();
+
+    // P1: 初始化时获取教师设置的默认 Provider
+    useEffect(() => {
+        fetch('/llm/default-provider')
+            .then(r => r.json())
+            .then(data => {
+                if (data.default_provider && !selectedProvider) {
+                    setSelectedProvider(data.default_provider);
+                }
+            })
+            .catch(() => {}); // 静默失败
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     if (availableProviders.length === 0) return null;
 

@@ -151,6 +151,7 @@ async def ingest_document(
     db: AsyncSession,
     content: bytes,
     filename: str,
+    file_url: str | None = None,
 ) -> dict:
     """提取文本 → 语义切片 → embedding → 入库（pgvector）。"""
     full_text = extract_text(content, filename)
@@ -159,7 +160,7 @@ async def ingest_document(
 
     # 保存原始文档
     doc_id = str(uuid.uuid4())
-    doc = Document(id=doc_id, content=full_text, source_file=filename)
+    doc = Document(id=doc_id, content=full_text, source_file=filename, file_url=file_url)
     db.add(doc)
 
     # 切片 + embedding
@@ -237,7 +238,7 @@ async def _vector_search(
             "score": round(1 - row.distance, 4),
         }
         for row in rows
-        if row.distance < 0.7  # 相似度 > 0.3
+        if row.distance < 0.5  # 相似度 > 0.5
     ]
 
 

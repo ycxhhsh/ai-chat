@@ -54,10 +54,14 @@ async def _generate_mindmap(
     auto_trigger: bool = False,
     map_key: str = "",
 ) -> None:
-    """从对话中提取思维导图（Tool Calling 操作指令模式）。
+    """从对话中提取思维导图（论证线索树 + 全量替换）。
 
-    Args:
-        auto_trigger: 若为 True，表示由 AI 回复自动触发，会做防抖检查。
+    流程：
+      1. 获取全部对话消息
+      2. LLM 一次性提取论证线索树 {topic, branches}
+      3. 转换为 React Flow 节点/边
+      4. 硬截断安全网
+      5. 以草稿模式广播
     """
     # 防抖检查（仅自动触发时生效）
     if auto_trigger:
@@ -74,12 +78,13 @@ async def _generate_mindmap(
     try:
         from app.db.session import AsyncSessionLocal
         from app.models.message import Message
-        from app.models.mindmap import MindMap
         from app.llm.factory import get_llm_client
-        from app.llm.prompts import MINDMAP_EXTRACTION_PROMPT
+        from app.llm.prompts import MINDMAP_TREE_PROMPT
         from sqlalchemy import select
 
-        # 获取对话历史
+        effective_key = map_key or f"session:{session_id}"
+
+        # ── 全量获取对话消息（新策略：每次全量重新生成）──
         async with AsyncSessionLocal() as db:
             result = await db.execute(
                 select(Message)
@@ -103,52 +108,47 @@ async def _generate_mindmap(
                 )
             return
 
-        # 查找已有思维导图（用于增量更新）
-        effective_key = map_key or f"session:{session_id}"
-        existing_nodes: list[dict] = []
-        existing_edges: list[dict] = []
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(MindMap)
-                .where(MindMap.map_key == effective_key)
-                .order_by(MindMap.updated_at.desc())
-                .limit(1)
-            )
-            existing_map = result.scalar_one_or_none()
-            if existing_map and existing_map.nodes:
-                existing_nodes = list(existing_map.nodes)
-                existing_edges = list(existing_map.edges)
+        # 自动触发时，消息太少则跳过
+        if auto_trigger and len(messages) < 3:
+            return
 
-        # 构建对话文本（注入 message_id 以便 AI 节点溯源）
+        # 构建对话文本
         conversation_text = "\n".join(
-            f"[MsgID:{m.message_id}] [{m.sender.get('name', '未知')}]: {m.content}"
+            f"[{m.sender.get('name', '未知')}]: {m.content}"
             for m in reversed(messages)
         )
+        msg_count = len(messages)
+        char_count = len(conversation_text)
+        rounds = msg_count // 2  # 粗略算对话轮次
 
-        # 构建增量上下文
-        existing_context = ""
-        if existing_nodes:
-            existing_ids = [n.get("id", "") for n in existing_nodes]
-            existing_context = (
-                "\n\n当前已有节点 ID: " + ", ".join(existing_ids)
-                + "\n请在此基础上增量更新（可用 update_node 修改已有节点，或 add_node 添加新节点）。"
-            )
-
-        # 调用 LLM 提取操作指令
+        # ── 单次 LLM 调用 ──
         client = get_llm_client("deepseek")
         llm_messages = [
-            {"role": "system", "content": MINDMAP_EXTRACTION_PROMPT},
-            {"role": "user", "content": f"对话内容：\n{conversation_text}{existing_context}"},
+            {"role": "system", "content": MINDMAP_TREE_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"[对话文本]（共 {rounds} 轮，{char_count} 字）：\n"
+                    f"{conversation_text}"
+                ),
+            },
         ]
 
         full_response = ""
-        async for chunk in client.stream_chat(messages=llm_messages, temperature=0.3):
+        async for chunk in client.stream_chat(
+            messages=llm_messages, temperature=0.2,
+        ):
             full_response += chunk
 
-        # 多层 JSON 解析容错
-        operations = _parse_operations_json(full_response)
-        if operations is None:
-            logger.error("Failed to parse mindmap operations: %s", full_response[:300])
+        logger.info(
+            "Mindmap response (session=%s, rounds=%d, chars=%d): %s",
+            session_id, rounds, char_count, full_response[:300],
+        )
+
+        # 解析 {name, children} 树
+        tree = _parse_tree_json(full_response)
+        if tree is None:
+            logger.error("Failed to parse mindmap tree: %s", full_response[:300])
             await manager.broadcast(
                 session_id,
                 "ERROR",
@@ -161,15 +161,15 @@ async def _generate_mindmap(
             )
             return
 
-        # 将操作指令应用到已有节点/边
-        nodes, edges = _apply_operations(operations, existing_nodes, existing_edges)
+        # 转换为 React Flow 节点/边
+        nodes, edges = _tree_to_nodes_edges(tree)
 
-        # 为节点添加布局位置
-        for i, node in enumerate(nodes):
-            if "position" not in node:
-                row = i // 4
-                col = i % 4
-                node["position"] = {"x": col * 200 + 50, "y": row * 150 + 50}
+        # 硬截断安全网
+        max_nodes = 3 if rounds <= 2 else (5 if rounds <= 5 else 8)
+        nodes, edges = _hard_truncate(nodes, edges, max_nodes, [])
+
+        # 树形布局
+        _apply_tree_layout(nodes, edges)
 
         # ── 铁律 2 草稿模式：不直接写入 DB，先作为草稿广播 ──
         draft_id = str(uuid.uuid4())
@@ -203,6 +203,172 @@ async def _generate_mindmap(
             "MINDMAP_GENERATING",
             {"is_generating": False},
         )
+
+
+def _hard_truncate(
+    nodes: list[dict],
+    edges: list[dict],
+    max_nodes: int,
+    existing_nodes: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    """强制截断节点数，优先保留已有节点，清理悬挂边。"""
+    if len(nodes) <= max_nodes:
+        return nodes, edges
+
+    existing_ids = {n.get("id") for n in existing_nodes}
+    kept = [n for n in nodes if n.get("id") in existing_ids]
+    new_nodes = [n for n in nodes if n.get("id") not in existing_ids]
+    nodes = kept + new_nodes[: max(0, max_nodes - len(kept))]
+
+    # 清理悬挂边（source/target 不在有效节点集合中）
+    valid_ids = {n.get("id") for n in nodes}
+    edges = [
+        e for e in edges
+        if e.get("source") in valid_ids and e.get("target") in valid_ids
+    ]
+    logger.info(
+        "Hard truncate: %d nodes → %d (max=%d), edges=%d",
+        len(kept) + len(new_nodes), len(nodes), max_nodes, len(edges),
+    )
+    return nodes, edges
+
+
+def _parse_tree_json(raw: str) -> dict | None:
+    """容错解析 LLM 返回的 {name, children} 树 JSON。"""
+    import re
+    import json
+
+    raw = raw.strip()
+
+    def _valid(data: object) -> dict | None:
+        if isinstance(data, dict) and "name" in data:
+            return data
+        return None
+
+    # 1. 直接解析
+    try:
+        r = _valid(json.loads(raw))
+        if r:
+            return r
+    except json.JSONDecodeError:
+        pass
+
+    # 2. 提取代码块
+    m = re.search(r"```(?:json)?\s*\n?(.*?)```", raw, re.DOTALL)
+    if m:
+        try:
+            r = _valid(json.loads(m.group(1).strip()))
+            if r:
+                return r
+        except json.JSONDecodeError:
+            pass
+
+    # 3. 正则匹配最外层 {}
+    m = re.search(r"\{.*\}", raw, re.DOTALL)
+    if m:
+        try:
+            r = _valid(json.loads(m.group(0)))
+            if r:
+                return r
+        except json.JSONDecodeError:
+            pass
+
+    return None
+
+
+def _tree_to_nodes_edges(tree: dict) -> tuple[list[dict], list[dict]]:
+    """将 {name, children} 递归树转换为 React Flow 节点和边。"""
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    _counter = [0]
+
+    def _clip(text: str, max_len: int = 10) -> str:
+        return text[:max_len] + "…" if len(text) > max_len else text
+
+    def _walk(node: dict, parent_id: str | None, depth: int) -> None:
+        _counter[0] += 1
+        nid = f"n{_counter[0]}"
+        label = _clip(node.get("name", ""), 10)
+        if not label:
+            return
+
+        # 根据深度和位置决定节点类型
+        if depth == 0:
+            ntype = "concept"       # 根节点 → 紫色
+        elif depth == 1:
+            ntype = "argument"      # 一级子 → 琥珀色
+        else:
+            ntype = "evidence"      # 二级子 → 绿色
+
+        nodes.append({"id": nid, "label": label, "type": ntype})
+
+        if parent_id:
+            rel = node.get("relationship", "")
+            edges.append({
+                "id": f"e_{parent_id}_{nid}",
+                "source": parent_id,
+                "target": nid,
+                "label": _clip(rel, 4) if rel else "",
+            })
+
+        # 递归子节点（最多 2 层深度）
+        if depth < 2:
+            for child in node.get("children", []):
+                _walk(child, nid, depth + 1)
+
+    _walk(tree, None, 0)
+    return nodes, edges
+
+
+def _apply_tree_layout(
+    nodes: list[dict],
+    edges: list[dict],
+) -> None:
+    """为节点分配树形布局位置（就地修改）。
+
+    布局：topic 顶部居中，branches 平铺第二层，children 平铺第三层。
+    """
+    if not nodes:
+        return
+
+    # 建立父子关系
+    children_of: dict[str, list[str]] = {}
+    for e in edges:
+        src = e.get("source", "")
+        tgt = e.get("target", "")
+        children_of.setdefault(src, []).append(tgt)
+
+    node_map = {n["id"]: n for n in nodes}
+    topic_id = nodes[0]["id"]  # 第一个总是 topic
+
+    # L1: topic
+    node_map[topic_id]["position"] = {"x": 400, "y": 50}
+
+    # L2: branches
+    l2_ids = children_of.get(topic_id, [])
+    l2_count = len(l2_ids)
+    l2_spacing = 400
+    l2_start_x = 400 - (l2_count - 1) * l2_spacing / 2
+
+    for i, bid in enumerate(l2_ids):
+        if bid not in node_map:
+            continue
+        bx = l2_start_x + i * l2_spacing
+        node_map[bid]["position"] = {"x": bx, "y": 220}
+
+        # L3: children of this branch
+        l3_ids = children_of.get(bid, [])
+        l3_count = len(l3_ids)
+        l3_spacing = 280
+        l3_start_x = bx - (l3_count - 1) * l3_spacing / 2
+
+        for j, cid in enumerate(l3_ids):
+            if cid not in node_map:
+                continue
+            node_map[cid]["position"] = {
+                "x": l3_start_x + j * l3_spacing,
+                "y": 400,
+            }
 
 
 def _parse_operations_json(raw: str) -> list[dict] | None:
@@ -294,31 +460,52 @@ def _apply_operations(
     existing_nodes: list[dict],
     existing_edges: list[dict],
 ) -> tuple[list[dict], list[dict]]:
-    """将操作指令应用到已有节点和边上。"""
+    """将操作指令应用到已有节点和边上（含标签去重）。"""
     nodes = list(existing_nodes)
     edges = list(existing_edges)
     node_ids = {n.get("id") for n in nodes}
+    # 标签去重索引：小写 label -> node id
+    label_index: dict[str, str] = {
+        n.get("label", "").strip().lower(): n.get("id", "")
+        for n in nodes if n.get("label")
+    }
 
     for op in operations:
         op_type = op.get("op", "")
 
         if op_type == "add_node":
             node_id = op.get("id", "")
-            if node_id and node_id not in node_ids:
+            label = op.get("label", "").strip()
+            label_key = label.lower()
+            if not node_id:
+                continue
+            # 标签去重：如果已有节点的 label 完全相同，跳过
+            if label_key in label_index:
+                logger.info(
+                    "Dedup: skip node %s (%s), same label as %s",
+                    node_id, label, label_index[label_key],
+                )
+                continue
+            if node_id not in node_ids:
                 nodes.append({
                     "id": node_id,
-                    "label": op.get("label", ""),
+                    "label": label,
                     "type": op.get("type", "concept"),
                     "source_message_ids": op.get("source_message_ids", []),
                 })
                 node_ids.add(node_id)
+                label_index[label_key] = node_id
 
         elif op_type == "update_node":
             node_id = op.get("id", "")
             for n in nodes:
                 if n.get("id") == node_id:
                     if "label" in op:
+                        old_label = n.get("label", "").strip().lower()
+                        if old_label in label_index:
+                            del label_index[old_label]
                         n["label"] = op["label"]
+                        label_index[op["label"].strip().lower()] = node_id
                     break
 
         elif op_type == "add_edge":
@@ -326,7 +513,6 @@ def _apply_operations(
             tgt = op.get("target", "")
             label = op.get("label", "")
             if src and tgt:
-                # 避免重复边
                 exists = any(
                     e.get("source") == src and e.get("target") == tgt
                     for e in edges

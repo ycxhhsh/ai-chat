@@ -198,3 +198,36 @@ async def teacher_review(
         "status": assignment.status,
         "teacher_review": assignment.teacher_review,
     }
+
+
+@router.patch("/{assignment_id}/ai-score")
+async def modify_ai_score(
+    assignment_id: str,
+    body: TeacherReview,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _teacher: Annotated[User, Depends(require_teacher)],
+):
+    """教师修改 AI 评分。"""
+    result = await db.execute(
+        select(Assignment).where(Assignment.assignment_id == assignment_id)
+    )
+    assignment = result.scalar_one_or_none()
+    if not assignment:
+        raise HTTPException(404, "作业不存在")
+
+    # 合并更新 AI 评审
+    current_review = assignment.ai_review or {}
+    if not isinstance(current_review, dict):
+        current_review = {}
+    if body.score is not None:
+        current_review["total_score"] = body.score
+    if body.comment is not None:
+        current_review["teacher_override_comment"] = body.comment
+    assignment.ai_review = current_review
+    await db.commit()
+
+    return {
+        "assignment_id": str(assignment.assignment_id),
+        "status": assignment.status,
+        "ai_review": assignment.ai_review,
+    }

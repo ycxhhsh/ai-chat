@@ -76,6 +76,7 @@ class AIRequestQueue:
         is_private: bool = False,
         conversation_id: str | None = None,
         priority: str = "high",
+        enable_search: bool = False,
     ) -> str:
         """将 AI 任务推入 Redis 队列。
 
@@ -95,6 +96,7 @@ class AIRequestQueue:
             "messages": messages,
             "is_private": is_private,
             "conversation_id": conversation_id,
+            "enable_search": enable_search,
         }
 
         if redis_client.is_available():
