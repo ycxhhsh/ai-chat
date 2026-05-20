@@ -5,9 +5,11 @@ import asyncio
 import uuid
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import select, update as sa_update, desc, func
+import csv
+import io
 
 from app.core.dependencies import get_db, get_current_user
 from app.models.user import User
@@ -138,6 +140,57 @@ async def get_job(
 
 
 # ── Notification 端点 ──
+
+@router.get("/export-group-logs")
+async def export_group_logs(
+    channel_id: str,
+    db=Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """导出特定小组频道的所有对话记录（CSV），包含阶段标记及防止Windows乱码的UTF-8 BOM。"""
+    if user.role != "teacher" and user.role != "admin":
+        raise HTTPException(status_code=403, detail="Permission denied: Teachers only")
+
+    from app.models.message import Message
+
+    result = await db.execute(
+        select(Message)
+        .where(Message.session_id == channel_id)
+        .order_by(Message.created_at.asc())
+    )
+    messages = result.scalars().all()
+
+    output = io.StringIO()
+    # 写入 UTF-8 BOM，防止 Windows 下 Excel 打开乱码 (Risk 2 Fix)
+    output.write('\ufeff')
+    writer = csv.writer(output)
+    writer.writerow([
+        "小组ID", "阶段 (EDIPT)", "发言人角色", "发言人姓名",
+        "内容 (Content)", "AI触发支架类型 (如有)", "时间戳"
+    ])
+
+    for m in messages:
+        sender_role = m.sender.get("role", "")
+        sender_name = m.sender.get("name", "")
+        scaffold_type = m.metadata_info.get("scaffold_info", {}).get("display_name", "") if m.metadata_info else ""
+        writer.writerow([
+            m.session_id,
+            m.edipt_stage or "Empathy",
+            sender_role,
+            sender_name,
+            m.content,
+            scaffold_type,
+            m.created_at.strftime("%Y-%m-%d %H:%M:%S") if m.created_at else ""
+        ])
+
+    csv_bytes = output.getvalue().encode('utf-8')
+
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=group_{channel_id}_logs.csv"}
+    )
+
 
 @router.get("/notifications", response_model=list[NotificationResponse])
 async def list_notifications(

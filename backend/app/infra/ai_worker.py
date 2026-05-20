@@ -256,6 +256,173 @@ async def execute_ai_task(
         })
         await publish_event("AI_TYPING", {"is_typing": False})
 
+async def execute_drawing_task(task: dict[str, Any], *, local_mode: bool = False) -> None:
+    """执行绘图流水线任务：提取共识 -> 生成负面风格词 -> 调用绘图 API -> 返回结果。"""
+    from app.core.config import get_settings
+    from app.llm.factory import get_llm_client
+
+    task_id = task["task_id"]
+    session_id = task["session_id"]
+    messages = task["messages"]
+    api_provider = task.get("api_provider", "aliyun")
+    settings = get_settings()
+
+    async def publish_event(event: str, data: dict) -> None:
+        payload = json.dumps({"event": event, "data": data})
+        if local_mode:
+            from app.websockets.manager import manager
+            if event == "DRAWING_DONE":
+                # Fallback directly to channel
+                await manager.broadcast(session_id, "DRAWING_DONE", data)
+            else:
+                await manager.broadcast(session_id, event, data)
+        else:
+            import redis.asyncio as aioredis
+            r = aioredis.from_url(settings.redis_url, decode_responses=True)
+            try:
+                channel = f"cothink:ws:{session_id}"
+                await r.publish(channel, payload)
+            finally:
+                await r.close()
+
+    try:
+        await publish_event("AI_TYPING", {"is_typing": True, "provider": "drawing", "task_id": task_id})
+
+        # 1. 使用 DeepSeek 提炼频道共识（或直接使用自定义提示词）
+        client = get_llm_client("deepseek")
+        custom_prompt = task.get("custom_prompt")
+
+        if custom_prompt and custom_prompt.strip():
+            consensus_en = custom_prompt.strip()
+        else:
+            extraction_prompt = "你是一位空间设计归纳助手。请根据以下小组成员的群聊内容，准确提炼出他们达成共识的【未来学习空间设计】的核心要素，例如功能分区、课桌摆放、设施位置等。输出一段简练的英文描述，不超过30个词，只输出英文提炼结果，不要加任何标点以外的修饰。"
+
+            chat_context = "\n".join([m.get("content", "") for m in messages[-20:]]) # recent 20 messages
+            extract_req = [
+                {"role": "system", "content": extraction_prompt},
+                {"role": "user", "content": chat_context}
+            ]
+
+            consensus_en = await client.chat(messages=extract_req, temperature=0.3)
+
+        # 2. 拼接绘图提示词 (强制线稿风格)
+        drawing_prompt = f"Simple architectural sketch, black and white line art, rough pencil drawing, no color, no photorealism, layout of a classroom... {consensus_en.strip()}"
+
+        # 3. Request Drawing API (Mocked properly for Aliyun / Nanobanana placeholder)
+        image_url = ""
+        markdown_image = ""
+        if api_provider == "deepseek":
+            drawing_prompt_sys = (
+                "你是一位专业建筑草图画师。基于给出的空间设计要求，请直接生成且仅生成一副详细建筑线稿草图的 SVG 代码。\n"
+                "要求：\n"
+                "1. 必须是规范的 SVG 代码（包含 viewBox，xmlns 等必要属性），画面宽600高400，纯黑白线条风格，清晰美观，使用 rect/path/circle/text 等绘制空间布局和设施的位置。\n"
+                "2. 仅输出以 <svg> 开头 </svg> 结尾的字符串，绝不允许输出 markdown 代码块标记或其他任何解释文字。\n"
+                "3. 背景要求为纯色或透明，线条建议灰色或黑色。"
+            )
+            logger.info("Executing drawing API deepseek layout generation...")
+            svg_content_raw = await client.chat(messages=[
+                {"role": "system", "content": drawing_prompt_sys},
+                {"role": "user", "content": f"共识要素提炼：{consensus_en.strip()}"}
+            ], temperature=0.7)
+            import re
+            svg_match = re.search(r'(<svg[^>]*>.*?</svg>)', svg_content_raw, re.DOTALL | re.IGNORECASE)
+            svg_code = svg_match.group(1) if svg_match else svg_content_raw.strip()
+
+            import base64
+            svg_b64 = base64.b64encode(svg_code.encode('utf-8')).decode('utf-8')
+            image_url = f"data:image/svg+xml;base64,{svg_b64}"
+            markdown_image = f"![设计草图]({image_url})"
+
+        elif api_provider == "aliyun":
+            import httpx
+            api_key = (
+                settings.dashscope_api_key
+                or settings.tongyi_api_key
+                or settings.embedding_api_key
+            )
+            if not api_key:
+                raise ValueError(
+                    "DASHSCOPE_API_KEY, TONGYI_API_KEY, or EMBEDDING_API_KEY "
+                    "is required for Aliyun drawing generation."
+                )
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "X-DashScope-Async": "enable",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": "wanx-v1",
+                "input": {
+                    "prompt": drawing_prompt
+                },
+                "parameters": {
+                    "size": "1024*1024",
+                    "n": 1
+                }
+            }
+            logger.info("Submitting drawing task to Aliyun Wanx-v1...")
+            async with httpx.AsyncClient() as http_client:
+                submit_res = await http_client.post(
+                    "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis",
+                    headers=headers,
+                    json=payload,
+                    timeout=10.0
+                )
+                submit_data = submit_res.json()
+                if "output" not in submit_data or "task_id" not in submit_data["output"]:
+                    raise ValueError(f"Aliyun API submit failed: {submit_data}")
+
+                wanx_task_id = submit_data["output"]["task_id"]
+                logger.info(f"Wanx task submitted: {wanx_task_id}. Polling status...")
+
+                poll_url = f"https://dashscope.aliyuncs.com/api/v1/tasks/{wanx_task_id}"
+                query_headers = {"Authorization": f"Bearer {api_key}"}
+
+                max_retries = 90
+                result_url = ""
+                for _ in range(max_retries):
+                    await asyncio.sleep(2)
+                    status_res = await http_client.get(poll_url, headers=query_headers, timeout=10.0)
+                    status_data = status_res.json()
+                    status = status_data.get("output", {}).get("task_status", "")
+
+                    if status == "SUCCEEDED":
+                        results = status_data.get("output", {}).get("results", [])
+                        if results and "url" in results[0]:
+                            result_url = results[0]["url"]
+                        break
+                    elif status == "FAILED" or status == "UNKNOWN":
+                        error_msg = status_data.get("output", {}).get("message", "Unknown error")
+                        raise ValueError(f"Aliyun API generation failed: {error_msg}")
+
+                if not result_url:
+                    raise ValueError("Aliyun API timeout or no image URL returned.")
+
+                markdown_image = f"![设计草图]({result_url})"
+        elif api_provider == "nanobanana":
+            # [TODO] Implement nanobanana API
+            image_url = f"https://placehold.co/600x400/eeeeee/black?text=NanoBanana+Sketch+Mockup"
+            await asyncio.sleep(2)
+            markdown_image = f"![设计草图]({image_url})"
+        else:
+            await asyncio.sleep(1)
+            markdown_image = f"![设计草图](https://placehold.co/600x400/eeeeee/black?text=Unknown+Provider)"
+
+        # 4. 发布结果
+        await publish_event("DRAWING_DONE", {
+            "task_id": task_id,
+            "session_id": session_id,
+            "content": markdown_image,
+        })
+
+        await publish_event("AI_TYPING", {"is_typing": False})
+
+    except Exception as e:
+        logger.exception("Drawing task %s failed: %s", task_id, e)
+        await publish_event("ERROR", {"message": f"绘图生成失败: {e}", "code": "DRAWING_ERROR"})
+        await publish_event("AI_TYPING", {"is_typing": False})
+
+
 
 async def worker_loop() -> None:
     """Worker 主循环：从 Redis 队列消费任务。"""
@@ -289,6 +456,19 @@ async def worker_loop() -> None:
     logger.info("AI Worker started, listening on queues: %s, %s",
                 QUEUE_HIGH, QUEUE_LOW)
 
+    sem = asyncio.Semaphore(20)
+
+    async def process_task(task: dict) -> None:
+        async with sem:
+            task_id = task.get("task_id", "unknown")
+            try:
+                if task.get("task_type") == "drawing":
+                    await execute_drawing_task(task, local_mode=False)
+                else:
+                    await execute_ai_task(task, local_mode=False)
+            except Exception as e:
+                logger.error("Error processing task %s: %s", task_id, e)
+
     try:
         while True:
             try:
@@ -307,16 +487,16 @@ async def worker_loop() -> None:
                 task_id = task.get("task_id", "unknown")
 
                 logger.info(
-                    "Picked task %s from %s", task_id, queue_name
+                    "Picked task %s (type=%s) from %s", task_id, task.get("task_type", "chat"), queue_name
                 )
 
-                # 执行任务（不阻塞主循环，允许并发）
-                await execute_ai_task(task, local_mode=False)
+                # 并发执行，不再阻塞 worker_loop
+                asyncio.create_task(process_task(task))
 
             except json.JSONDecodeError as e:
                 logger.error("Invalid task JSON: %s", e)
             except Exception as e:
-                logger.error("Worker error: %s", e)
+                logger.error("Worker loop error: %s", e)
                 await asyncio.sleep(1)
     finally:
         await redis.close()

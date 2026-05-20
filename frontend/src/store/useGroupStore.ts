@@ -17,6 +17,7 @@ interface GroupState {
     deleteGroup: (groupId: string) => Promise<void>;
     renameGroup: (groupId: string, name: string) => Promise<void>;
     setCurrentGroup: (groupId: string | null) => void;
+    updateGroupStage: (groupId: string, stage: string) => void;
     clearGroups: () => void;
 }
 
@@ -62,6 +63,10 @@ export const useGroupStore = create<GroupState>()(
             },
 
             setCurrentGroup: (groupId) => set({ currentGroupId: groupId }),
+
+            updateGroupStage: (groupId, stage) => set((s) => ({
+                groups: s.groups.map(g => g.id === groupId ? { ...g, current_stage: stage } : g)
+            })),
 
             clearGroups: () => set({ groups: [], currentGroupId: null }),
         }),

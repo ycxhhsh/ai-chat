@@ -4,6 +4,7 @@
 import React, { useState } from 'react';
 import api from '../../api';
 import { RefreshCw, Copy } from 'lucide-react';
+import { copyToClipboard } from '../../utils/clipboard';
 
 interface CourseManagerProps {
     courses: Array<Record<string, unknown>>;
@@ -63,7 +64,10 @@ export const CourseManager: React.FC<CourseManagerProps> = ({ courses, loadCours
                     <div key={c.course_id as string} className="bg-white rounded-xl border border-gray-200 p-4">
                         <div className="flex items-center justify-between mb-2">
                             <h3 className="text-sm font-medium text-gray-900">{c.name as string}</h3>
-                            <button onClick={() => { navigator.clipboard.writeText(c.invite_code as string); alert('邀请码已复制'); }}
+                            <button onClick={async () => {
+                                const success = await copyToClipboard(c.invite_code as string);
+                                if (success) alert('邀请码已复制');
+                            }}
                                 className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800">
                                 <Copy className="w-3 h-3" />
                                 {c.invite_code as string}

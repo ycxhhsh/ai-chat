@@ -135,10 +135,27 @@ async def _generate_mindmap(
         ]
 
         full_response = ""
-        async for chunk in client.stream_chat(
-            messages=llm_messages, temperature=0.2,
-        ):
-            full_response += chunk
+        try:
+            async with asyncio.timeout(60.0):
+                async for chunk in client.stream_chat(
+                    messages=llm_messages, temperature=0.2,
+                ):
+                    full_response += chunk
+        except TimeoutError:
+            logger.error(
+                "Mindmap LLM stream timeout (session=%s, chars=%d)",
+                session_id, len(full_response),
+            )
+            if len(full_response) < 50:
+                await manager.broadcast(
+                    session_id,
+                    "ERROR",
+                    {"message": "思维导图生成超时，请稍后再试", "code": "MINDMAP_TIMEOUT"},
+                )
+                await manager.broadcast(
+                    session_id, "MINDMAP_GENERATING", {"is_generating": False},
+                )
+                return
 
         logger.info(
             "Mindmap response (session=%s, rounds=%d, chars=%d): %s",

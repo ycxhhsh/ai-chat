@@ -6,12 +6,20 @@ import React, { useState, useEffect } from 'react';
 import api from '../../api';
 import { api as apiTyped } from '../../api';
 import clsx from 'clsx';
-import { RefreshCw, Zap } from 'lucide-react';
+import { RefreshCw, Zap, Heart, Target, Lightbulb, PenTool, CheckSquare } from 'lucide-react';
 
 interface ScaffoldManagerProps {
     scaffolds: Array<Record<string, unknown>>;
     loadScaffolds: () => void;
 }
+
+const EDIPT_STAGES = [
+    { id: 'Empathy', label: '共情', icon: Heart, desc: '挖掘痛点' },
+    { id: 'Define', label: '定义', icon: Target, desc: '明确问题' },
+    { id: 'Ideate', label: '构思', icon: Lightbulb, desc: '头脑风暴' },
+    { id: 'Prototype', label: '原型', icon: PenTool, desc: '制作方案' },
+    { id: 'Test', label: '测试', icon: CheckSquare, desc: '验证反馈' }
+];
 
 export const ScaffoldManager: React.FC<ScaffoldManagerProps> = ({
     scaffolds, loadScaffolds,
@@ -19,6 +27,8 @@ export const ScaffoldManager: React.FC<ScaffoldManagerProps> = ({
     const [editingScaffold, setEditingScaffold] = useState<Record<string, any> | null>(null);
     const [suggestEnabled, setSuggestEnabled] = useState(true);
     const [suggestLoading, setSuggestLoading] = useState(false);
+    const [globalStage, setGlobalStage] = useState('Empathy');
+    const [pushingStage, setPushingStage] = useState(false);
 
     // 加载开关状态
     useEffect(() => {
@@ -58,17 +68,84 @@ export const ScaffoldManager: React.FC<ScaffoldManagerProps> = ({
         } catch (_e) { alert('保存失败'); }
     };
 
+    const handlePushStage = async (stageId: string) => {
+        if (!window.confirm(`即将把全班所有小组强行推进至【${EDIPT_STAGES.find(s=>s.id===stageId)?.label}】阶段，确定吗？`)) return;
+        setPushingStage(true);
+        try {
+            await apiTyped.groups.pushStageToAll(stageId);
+            setGlobalStage(stageId);
+        } catch (e) {
+            alert('推送阶段失败');
+        } finally {
+            setPushingStage(false);
+        }
+    };
+
     return (
-        <div>
-            <div className="flex items-center justify-between mb-6">
-                <h1 className="text-xl font-bold text-gray-900">支架管理</h1>
+        <div className="space-y-6">
+            <div className="flex items-center justify-between">
+                <h1 className="text-xl font-bold text-gray-900">支架与过程管理</h1>
                 <button onClick={loadScaffolds} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
                     <RefreshCw className="w-3.5 h-3.5" /> 刷新
                 </button>
             </div>
 
+            {/* ── 全局阶段控制 ── */}
+            <div className="bg-white rounded-xl border border-indigo-100 p-5 shadow-sm">
+                <div className="mb-4 flex items-center justify-between">
+                    <div>
+                        <h2 className="text-sm font-semibold text-gray-900">全局课程阶段控制 (EDIPT)</h2>
+                        <p className="text-xs text-gray-500 mt-1">切换阶段将强制全班小组跳转，并赋予 AI 该阶段的专属引导指令 (如禁止发散、要求画图等)。</p>
+                    </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    {EDIPT_STAGES.map((stage, idx) => {
+                        const Icon = stage.icon;
+                        const isActive = globalStage === stage.id;
+                        return (
+                            <React.Fragment key={stage.id}>
+                                <button
+                                    onClick={() => handlePushStage(stage.id)}
+                                    disabled={pushingStage}
+                                    className={clsx(
+                                        'flex-1 relative group rounded-xl p-3 text-left transition-all duration-200 border-2',
+                                        isActive
+                                            ? 'bg-indigo-50 border-indigo-500 shadow-sm'
+                                            : 'bg-white border-transparent hover:bg-gray-50 hover:border-gray-200'
+                                    )}
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className={clsx(
+                                            'w-8 h-8 rounded-lg flex items-center justify-center transition-colors',
+                                            isActive ? 'bg-indigo-500 text-white' : 'bg-gray-100 text-gray-500 group-hover:text-indigo-600'
+                                        )}>
+                                            <Icon className="w-4 h-4" />
+                                        </div>
+                                        <div>
+                                            <div className={clsx("text-sm font-bold", isActive ? 'text-indigo-900' : 'text-gray-700')}>
+                                                {stage.label}
+                                            </div>
+                                            <div className="text-[11px] text-gray-400 mt-0.5">{stage.desc}</div>
+                                        </div>
+                                    </div>
+                                    {isActive && (
+                                        <div className="absolute -top-2 -right-2 w-5 h-5 bg-green-500 rounded-full border-2 border-white flex items-center justify-center animate-bounce">
+                                            <CheckSquare className="w-3 h-3 text-white" />
+                                        </div>
+                                    )}
+                                </button>
+                                {idx < EDIPT_STAGES.length - 1 && (
+                                    <div className="hidden lg:block w-4 h-0.5 bg-gray-200"></div>
+                                )}
+                            </React.Fragment>
+                        );
+                    })}
+                </div>
+            </div>
+
             {/* ── 智能推送开关 ── */}
-            <div className="bg-white rounded-xl border border-gray-200 p-4 mb-5">
+            <div className="bg-white rounded-xl border border-gray-200 p-4">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <div className={clsx(

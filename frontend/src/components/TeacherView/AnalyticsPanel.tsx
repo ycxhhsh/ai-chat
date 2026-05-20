@@ -184,7 +184,7 @@ function DiscussionDepth({ data }: { data?: any[] }) {
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                     <XAxis dataKey="name" tick={{ fontSize: 10 }} />
                     <YAxis tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v: number | string | undefined) => [`${v} 字`, '平均长度']} />
+                    <Tooltip formatter={(v: any) => [`${Array.isArray(v) ? v.join(',') : v} 字`, '平均长度']} />
                     <Bar dataKey="avg_length" fill="#10b981" radius={[4, 4, 0, 0]} name="平均字数" />
                 </BarChart>
             </ResponsiveContainer>

@@ -23,8 +23,9 @@ import { KnowledgeBase } from './KnowledgeBase';
 import { AssignmentGrading } from './AssignmentGrading';
 import { CourseManager } from './CourseManager';
 import { GroupManager } from './GroupManager';
+import { LearningSpaceDesignManager } from './LearningSpaceDesignManager';
 
-type TabType = 'overview' | 'students' | 'groups' | 'messages' | 'scaffolds' | 'analytics' | 'knowledge' | 'assignments' | 'courses';
+type TabType = 'overview' | 'students' | 'groups' | 'messages' | 'scaffolds' | 'learning_space_design' | 'analytics' | 'knowledge' | 'assignments' | 'courses';
 type ChatTypeFilter = 'all' | 'group' | 'personal';
 
 export const TeacherDashboard: React.FC = () => {
@@ -66,10 +67,21 @@ export const TeacherDashboard: React.FC = () => {
 
     const loadMessages = useCallback(async (page = 1) => {
         try {
-            const params: Record<string, any> = { page, page_size: 30, type: chatTypeFilter };
+            const params: Record<string, any> = { page, page_size: 50, type: chatTypeFilter };
             if (filterStudentId) params.student_id = filterStudentId;
             const data = await apiTyped.teacher.unifiedMessages(params);
-            setMessages(data.messages || []); setTotalMessages(data.total || 0); setMsgPage(page);
+
+            if (page === 1) {
+                setMessages(data.messages || []);
+            } else {
+                setMessages(prev => {
+                    const existingIds = new Set(prev.map(m => m.message_id));
+                    const newMsgs = (data.messages || []).filter((m: any) => !existingIds.has(m.message_id));
+                    return [...prev, ...newMsgs];
+                });
+            }
+
+            setTotalMessages(data.total || 0); setMsgPage(page);
         } catch (e) { console.error('Load messages failed:', e); }
     }, [chatTypeFilter, filterStudentId]);
 
@@ -119,6 +131,7 @@ export const TeacherDashboard: React.FC = () => {
         { type: 'groups', icon: UsersRound, label: '小组管理' },
         { type: 'messages', icon: MessageSquare, label: '对话记录' },
         { type: 'scaffolds', icon: BookOpen, label: '支架管理' },
+        { type: 'learning_space_design', icon: BookOpen, label: '学习空间设计' },
         { type: 'analytics', icon: TrendingUp, label: '学习分析' },
         { type: 'knowledge', icon: Upload, label: '教材上传' },
         { type: 'assignments', icon: ClipboardCheck, label: '作业批阅' },
@@ -227,6 +240,10 @@ export const TeacherDashboard: React.FC = () => {
 
                     {activeTab === 'scaffolds' && (
                         <ScaffoldManager scaffolds={scaffolds} loadScaffolds={loadScaffolds} />
+                    )}
+
+                    {activeTab === 'learning_space_design' && (
+                        <LearningSpaceDesignManager />
                     )}
 
                     {activeTab === 'analytics' && (

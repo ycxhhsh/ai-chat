@@ -113,10 +113,47 @@ class AIRequestQueue:
 
         return task_id
 
+    async def push_drawing_task(
+        self,
+        *,
+        session_id: str,
+        user_info: dict,
+        messages: list[dict[str, str]],
+        api_provider: str = "aliyun", # aliyun or nanobanana
+        custom_prompt: str | None = None,
+    ) -> str:
+        """推入绘图任务。"""
+        from app.infra import redis_client
+
+        task_id = str(uuid.uuid4())
+        task = {
+            "task_id": task_id,
+            "task_type": "drawing",
+            "session_id": session_id,
+            "user_info": user_info,
+            "messages": messages,
+            "api_provider": api_provider,
+            "custom_prompt": custom_prompt,
+        }
+
+        if redis_client.is_available():
+            redis = redis_client.get_redis()
+            await redis.lpush(QUEUE_HIGH, json.dumps(task))
+            logger.info("Drawing task %s pushed to Redis", task_id)
+        else:
+            logger.info("Redis unavailable, executing drawing task %s locally", task_id)
+            await self._execute_locally(task)
+
+        return task_id
+
     async def _execute_locally(self, task: dict) -> None:
         """降级模式：直接在本地执行 LLM 调用。"""
-        from app.infra.ai_worker import execute_ai_task
-        await execute_ai_task(task, local_mode=True)
+        if task.get("task_type") == "drawing":
+            from app.infra.ai_worker import execute_drawing_task
+            await execute_drawing_task(task, local_mode=True)
+        else:
+            from app.infra.ai_worker import execute_ai_task
+            await execute_ai_task(task, local_mode=True)
 
     async def submit(self, coro_func, *args: Any, **kwargs: Any) -> Any:
         """本地 Semaphore 模式（降级 / 测试用）。"""

@@ -399,6 +399,13 @@ class ConnectionManager:
                 )
                 await db.commit()
 
+            # P1: 异步触发长对话“记忆体”压缩
+            if (old_count + 2) >= 20:
+                from app.services.summary_service import update_working_memory
+                self._track_task(
+                    update_working_memory(conversation_id, llm_provider)
+                )
+
             # 首轮：自动生成标题
             if old_count == 0:
                 from app.websockets.handlers.chat import _generate_conversation_title

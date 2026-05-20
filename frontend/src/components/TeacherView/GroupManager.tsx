@@ -5,8 +5,9 @@ import React, { useState } from 'react';
 import { api } from '../../api';
 import {
     ChevronDown, ChevronUp, UserMinus, ArrowRightLeft,
-    Pencil, Trash2, RefreshCw, Users, Copy, Check,
+    Pencil, Trash2, RefreshCw, Users, Copy, Check, Download, Radio,
 } from 'lucide-react';
+import { copyToClipboard } from '../../utils/clipboard';
 
 interface GroupMember {
     user_id: string;
@@ -24,6 +25,7 @@ interface GroupData {
     created_at: string;
     member_count: number;
     members: GroupMember[];
+    current_stage: string;
 }
 
 interface GroupManagerProps {
@@ -38,6 +40,8 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ groups, loadGroups }
     const [transferringMember, setTransferringMember] = useState<{ groupId: string; userId: string; userName: string } | null>(null);
     const [loading, setLoading] = useState(false);
     const [copiedCode, setCopiedCode] = useState<string | null>(null);
+    const [groupStages, setGroupStages] = useState<Record<string, string>>({});
+    const [stageBroadcasting, setStageBroadcasting] = useState<string | null>(null);
 
     const handleRemoveMember = async (groupId: string, userId: string, name: string) => {
         if (!confirm(`确定将「${name}」移出小组吗？`)) return;
@@ -98,10 +102,34 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ groups, loadGroups }
         }
     };
 
-    const copyInviteCode = (code: string) => {
-        navigator.clipboard.writeText(code);
-        setCopiedCode(code);
-        setTimeout(() => setCopiedCode(null), 2000);
+    const copyInviteCode = async (code: string) => {
+        const success = await copyToClipboard(code);
+        if (success) {
+            setCopiedCode(code);
+            setTimeout(() => setCopiedCode(null), 2000);
+        }
+    };
+
+    const handleBroadcastStage = async (groupId: string) => {
+        const stage = groupStages[groupId] || 'Empathy';
+        setStageBroadcasting(groupId);
+        try {
+            await api.groups.pushStage(groupId, stage);
+        } catch (err: any) {
+            alert(err?.response?.data?.detail || '广播失败');
+        } finally {
+            setStageBroadcasting(null);
+        }
+    };
+
+    const handleExportLogs = (groupId: string) => {
+        const url = `/api/jobs/export-group-logs?channel_id=${groupId}`;
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `group_${groupId}_logs.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
     };
 
     return (
@@ -170,6 +198,33 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ groups, loadGroups }
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                {/* EDIPT 阶段控制器 */}
+                                    <select
+                                        value={groupStages[group.id] || group.current_stage || 'Empathy'}
+                                        onChange={(e) => setGroupStages(prev => ({ ...prev, [group.id]: e.target.value }))}
+                                        className="text-xs border border-indigo-200 rounded-lg px-1.5 py-1 text-indigo-700 bg-indigo-50 focus:outline-none focus:ring-1 focus:ring-indigo-400 cursor-pointer"
+                                        title="选择 EDIPT 阶段"
+                                    >
+                                        {['Empathy', 'Define', 'Ideate', 'Prototype', 'Test'].map(s => (
+                                            <option key={s} value={s}>{s}</option>
+                                        ))}
+                                    </select>
+                                    <button
+                                        onClick={() => handleBroadcastStage(group.id)}
+                                        disabled={stageBroadcasting === group.id}
+                                        className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-indigo-500 hover:bg-indigo-600 rounded-lg transition-colors disabled:opacity-50"
+                                        title="广播阶段切换"
+                                    >
+                                        <Radio className="w-3 h-3" />
+                                        {stageBroadcasting === group.id ? '广播中...' : '广播'}
+                                    </button>
+                                    <button
+                                        onClick={() => handleExportLogs(group.id)}
+                                        className="p-1.5 text-gray-400 hover:text-teal-500 hover:bg-teal-50 rounded-lg transition-colors"
+                                        title="导出对话记录"
+                                    >
+                                        <Download className="w-3.5 h-3.5" />
+                                    </button>
                                     <button
                                         onClick={() => { setRenameId(group.id); setRenameName(group.name); }}
                                         className="p-1.5 text-gray-400 hover:text-indigo-500 hover:bg-indigo-50 rounded-lg transition-colors"

@@ -19,3 +19,16 @@ class BaseLLMClient(ABC):
     ) -> AsyncIterator[str]:
         """流式生成回复，逐 chunk yield 文本。"""
         ...
+
+    async def chat(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+        temperature: float = 0.7,
+    ) -> str:
+        """非流式生成回复，直接返回完整字符串。默认实现通过消费 stream_chat 完成。"""
+        content = ""
+        async for chunk in self.stream_chat(messages=messages, model=model, temperature=temperature):
+            content += chunk
+        return content

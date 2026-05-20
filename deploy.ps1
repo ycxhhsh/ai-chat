@@ -78,8 +78,6 @@ if ($DeployFrontend) {
     }
 
     Write-Step "同步前端到服务器..."
-    # 用 scp 递归上传 dist 目录 (Windows 原生支持)
-    # 先清空旧文件再上传
     ssh -i $SSH_KEY -o StrictHostKeyChecking=no "${SERVER_USER}@${SERVER_IP}" "rm -rf ${SERVER_PATH}/frontend/dist"
     scp -i $SSH_KEY -o StrictHostKeyChecking=no -r "$ProjectRoot\frontend\dist" "${SERVER_USER}@${SERVER_IP}:${SERVER_PATH}/frontend/dist"
     if ($LASTEXITCODE -ne 0) {
@@ -93,7 +91,6 @@ if ($DeployFrontend) {
 if ($DeployBackend) {
     Write-Step "同步后端到服务器..."
 
-    # 创建临时排除列表
     $excludeFile = [System.IO.Path]::GetTempFileName()
     @(
         "__pycache__",
@@ -107,8 +104,6 @@ if ($DeployBackend) {
         "tests"
     ) | Set-Content $excludeFile
 
-    # 同步后端文件 (使用 scp 逐个关键目录)
-    # 先打包再传输，避免逐文件 scp 的开销
     Write-Step "打包后端代码..."
     $backendArchive = "$env:TEMP\cothink_backend.tar.gz"
 
@@ -124,24 +119,32 @@ if ($DeployBackend) {
         exit 1
     }
 
-    # 服务器端解包
-    ssh -i $SSH_KEY -o StrictHostKeyChecking=no "${SERVER_USER}@${SERVER_IP}" @"
-cd ${SERVER_PATH}/backend && \
-tar -xzf /tmp/cothink_backend.tar.gz && \
-rm /tmp/cothink_backend.tar.gz
-"@
+    $unpackCmd = "cd ${SERVER_PATH}/backend && tar -xzf /tmp/cothink_backend.tar.gz && rm /tmp/cothink_backend.tar.gz"
+    ssh -i $SSH_KEY -o StrictHostKeyChecking=no "${SERVER_USER}@${SERVER_IP}" $unpackCmd
 
     Remove-Item $backendArchive -ErrorAction SilentlyContinue
     Remove-Item $excludeFile -ErrorAction SilentlyContinue
     Write-Success "后端同步完成"
 
-    # 重建并重启后端容器
+    Write-Step "构建后端镜像..."
+    $buildCmd = "cd ${SERVER_PATH} && docker compose build backend"
+    ssh -i $SSH_KEY -o StrictHostKeyChecking=no "${SERVER_USER}@${SERVER_IP}" $buildCmd
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail "后端镜像构建失败！"
+        exit 1
+    }
+
+    Write-Step "执行数据库迁移..."
+    $migrateCmd = "cd ${SERVER_PATH} && docker compose run --rm backend alembic upgrade head"
+    ssh -i $SSH_KEY -o StrictHostKeyChecking=no "${SERVER_USER}@${SERVER_IP}" $migrateCmd
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail "数据库迁移失败！"
+        exit 1
+    }
+
     Write-Step "重启后端服务..."
-    ssh -i $SSH_KEY -o StrictHostKeyChecking=no "${SERVER_USER}@${SERVER_IP}" @"
-cd ${SERVER_PATH} && \
-docker compose build backend && \
-docker compose up -d backend ai-worker grading-worker
-"@
+    $restartCmd = "cd ${SERVER_PATH} && docker compose up -d backend ai-worker grading-worker"
+    ssh -i $SSH_KEY -o StrictHostKeyChecking=no "${SERVER_USER}@${SERVER_IP}" $restartCmd
     if ($LASTEXITCODE -ne 0) {
         Write-Fail "后端重启失败！"
         exit 1

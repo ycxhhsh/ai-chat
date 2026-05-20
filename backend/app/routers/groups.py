@@ -30,6 +30,7 @@ class GroupResponse(BaseModel):
     invite_code: str
     created_by: str
     created_at: str
+    current_stage: str
 
     class Config:
         from_attributes = True
@@ -66,6 +67,7 @@ async def create_group(
         invite_code=group.invite_code,
         created_by=group.created_by,
         created_at=group.created_at.isoformat(),
+        current_stage=group.current_stage,
     )
 
 
@@ -120,6 +122,7 @@ async def list_my_groups(
             invite_code=g.invite_code,
             created_by=g.created_by,
             created_at=g.created_at.isoformat(),
+            current_stage=g.current_stage,
         )
         for g in groups
     ]
@@ -192,6 +195,7 @@ async def rename_group(
         invite_code=group.invite_code,
         created_by=group.created_by,
         created_at=group.created_at.isoformat(),
+        current_stage=group.current_stage,
     )
 
 
@@ -233,4 +237,85 @@ async def list_group_members(
         for gm, u in rows
     ]
 
+
+class StageUpdateBody(BaseModel):
+    stage: str  # Empathy | Define | Ideate | Prototype | Test
+
+
+VALID_STAGES = {"Empathy", "Define", "Ideate", "Prototype", "Test"}
+
+
+@router.post("/{group_id}/stage")
+async def teacher_push_stage(
+    group_id: str,
+    body: StageUpdateBody,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """教师端：将 EDIPT 阶段广播给指定小组所有在线学生，并持久化到小组记录。"""
+    if user.role not in ("teacher", "admin"):
+        raise HTTPException(status_code=403, detail="仅教师可操作")
+    if body.stage not in VALID_STAGES:
+        raise HTTPException(status_code=422, detail=f"无效阶段，合法值: {VALID_STAGES}")
+
+    result = await db.execute(select(Group).where(Group.id == group_id))
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="小组不存在")
+
+    # 持久化当前阶段
+    group.current_stage = body.stage
+    db.add(group)
+    await db.commit()
+
+    # 通过 WS Manager 广播给所有在线学生
+    try:
+        from app.websockets.manager import manager
+        await manager.broadcast(group_id, "STAGE_UPDATE", {
+            "stage": body.stage,
+            "group_id": group_id,
+            "pushed_by": str(user.user_id),
+        })
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Stage broadcast failed: %s", e)
+
+    return {"ok": True, "group_id": group_id, "stage": body.stage}
+
+
+@router.post("/stage/all")
+async def teacher_push_stage_all(
+    body: StageUpdateBody,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """教师端：一键将所有小组的 EDIPT 阶段推进，并全部广播。"""
+    if user.role not in ("teacher", "admin"):
+        raise HTTPException(status_code=403, detail="仅教师可操作")
+    if body.stage not in VALID_STAGES:
+        raise HTTPException(status_code=422, detail=f"无效阶段，合法值: {VALID_STAGES}")
+
+    # 修改全体记录
+    result = await db.execute(select(Group))
+    groups = result.scalars().all()
+    for g in groups:
+        g.current_stage = body.stage
+        db.add(g)
+
+    await db.commit()
+
+    # 向所有正在工作的 websocket channel 广播
+    try:
+        from app.websockets.manager import manager
+        for g in groups:
+            await manager.broadcast(g.id, "STAGE_UPDATE", {
+                "stage": body.stage,
+                "group_id": g.id,
+                "pushed_by": str(user.user_id),
+            })
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Stage broadcast all failed: %s", e)
+
+    return {"ok": True, "stage": body.stage, "updated_count": len(groups)}
 

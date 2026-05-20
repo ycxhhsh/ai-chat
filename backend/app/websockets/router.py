@@ -52,15 +52,23 @@ async def _load_session_data(
     """
     scaffolds_data = []
     recent_messages = []
+    current_stage = "Empathy"
 
     try:
         from app.db.session import AsyncSessionLocal
         from app.models.scaffold import Scaffold
         from app.models.message import Message
         from app.models.ai_conversation import AiConversation
+        from app.models.group import Group
         from sqlalchemy import select, or_, and_
 
         async with AsyncSessionLocal() as db:
+            # 加载当前小组阶段
+            stage_res = await db.execute(select(Group.current_stage).where(Group.id == session_id))
+            stage = stage_res.scalar_one_or_none()
+            if stage:
+                current_stage = stage
+
             # 加载活跃支架
             result = await db.execute(
                 select(Scaffold)
@@ -143,6 +151,7 @@ async def _load_session_data(
     return {
         "scaffolds": scaffolds_data,
         "recent_messages": recent_messages,
+        "current_stage": current_stage,
     }
 
 
@@ -188,6 +197,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 "available_providers": get_available_providers(),
                 "scaffolds": session_data["scaffolds"],
                 "recent_messages": session_data["recent_messages"],
+                "current_stage": session_data["current_stage"],
             },
         })
     )
@@ -209,6 +219,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             # 忽略客户端 PONG 回复
             if text.strip() in ('{"event":"PONG","data":{}}', '{"event":"PONG"}'):
                 continue
+            # 拦截客户端主动发送的 PING，并回复 PONG，不进入 dispatcher
+            if '"event":"PING"' in text.replace(' ', ''):
+                await websocket.send_text('{"event":"PONG","data":{}}')
+                continue
+
             await dispatch(websocket, session_id, text, manager)
     except WebSocketDisconnect:
         pass

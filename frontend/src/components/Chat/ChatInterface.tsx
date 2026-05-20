@@ -6,7 +6,7 @@
  * P0: 长对话虚拟化（>50 条启用 react-window）+ 搜索来源自动清理。
  */
 import React, { useCallback, useEffect, useDeferredValue, useRef, useState } from 'react';
-import { List, type ListImperativeAPI } from 'react-window';
+import { List, useDynamicRowHeight, type ListImperativeAPI } from 'react-window';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useChatStore } from '../../store/useChatStore';
 import { MessageBubble } from './MessageBubble';
@@ -18,17 +18,8 @@ import type { ChatMessage } from '../../types';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-/** 虚拟化阈值：超过此条数启用 react-window */
+/** 虚拟化阈值：大幅降低，从 50 条消息开始自动启用高效虚拟化 */
 const VIRTUALIZE_THRESHOLD = 50;
-
-/** 根据消息内容估算行高 */
-const estimateRowHeight = (msg: ChatMessage): number => {
-    const len = msg.content?.length || 0;
-    if (len < 50) return 72;
-    if (len < 150) return 96;
-    if (len < 400) return 140;
-    return 180;
-};
 
 interface Props {
     messages: ChatMessage[];
@@ -37,6 +28,8 @@ interface Props {
     showScaffolds?: boolean;
     isAiChannel?: boolean;
     disabled?: boolean;
+    onRequestDrawing?: () => void;
+    currentStage?: string;
 }
 
 export const ChatInterface: React.FC<Props> = ({
@@ -46,6 +39,8 @@ export const ChatInterface: React.FC<Props> = ({
     showScaffolds = true,
     isAiChannel = false,
     disabled = false,
+    onRequestDrawing,
+    currentStage,
 }) => {
     const { user } = useAuthStore();
     const { isAiTyping, aiStreamContent, highlightedMsgId, scaffoldSuggestion, clearScaffoldSuggestion, searchSources, clearSearchSources } = useChatStore();
@@ -59,6 +54,12 @@ export const ChatInterface: React.FC<Props> = ({
 
     const useVirtualization = messages.length > VIRTUALIZE_THRESHOLD;
 
+    // P0: 使用 react-window 2.x 的动态高度 hook
+    const dynamicRowHeight = useDynamicRowHeight({
+        defaultRowHeight: 96,
+        key: messages.length, // 当消息总数变化时重置缓存（主要针对清空场景）
+    });
+
     // 流式内容防抖：useDeferredValue 在高频更新时自动跳过中间帧
     const deferredStream = useDeferredValue(aiStreamContent);
 
@@ -67,7 +68,9 @@ export const ChatInterface: React.FC<Props> = ({
         if (!useVirtualization || !containerRef.current) return;
         const obs = new ResizeObserver((entries) => {
             for (const entry of entries) {
-                setContainerHeight(entry.contentRect.height);
+                if (entry.contentRect.height > 0) {
+                    setContainerHeight(entry.contentRect.height);
+                }
             }
         });
         obs.observe(containerRef.current);
@@ -75,9 +78,14 @@ export const ChatInterface: React.FC<Props> = ({
     }, [useVirtualization]);
 
     // 节流滚动：用 rAF 合并高频滚动请求
-    const scrollToBottom = useCallback(() => {
+    const scrollToBottom = useCallback((behavior: 'auto' | 'smooth' = 'auto') => {
         if (useVirtualization) {
-            listRef.current?.scrollToRow({ index: messages.length - 1, align: 'end' });
+            // 虚拟列表滚动到最后一条
+            listRef.current?.scrollToRow({
+                index: messages.length - 1,
+                align: 'end',
+                behavior: behavior === 'smooth' ? 'smooth' : 'auto'
+            });
             return;
         }
         if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -91,7 +99,7 @@ export const ChatInterface: React.FC<Props> = ({
     // 消息变化 / 流式内容变化时滚动
     useEffect(() => {
         scrollToBottom();
-    }, [messages, deferredStream, scrollToBottom]);
+    }, [messages.length, deferredStream, scrollToBottom]);
 
     // cleanup rAF
     useEffect(() => {
@@ -105,7 +113,13 @@ export const ChatInterface: React.FC<Props> = ({
         if (!highlightedMsgId) return;
         if (useVirtualization) {
             const idx = messages.findIndex((m) => m.message_id === highlightedMsgId);
-            if (idx >= 0) listRef.current?.scrollToRow({ index: idx, align: 'center' });
+            if (idx >= 0) {
+                listRef.current?.scrollToRow({
+                    index: idx,
+                    align: 'center',
+                    behavior: 'smooth'
+                });
+            }
             return;
         }
         const el = document.getElementById(`msg-${highlightedMsgId}`);
@@ -124,16 +138,32 @@ export const ChatInterface: React.FC<Props> = ({
         }
     }, [isAiTyping, searchSources, clearSearchSources]);
 
-    // 虚拟列表行渲染（通过闭包引用 messages 和 user）
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const RowComponent = useCallback((props: any) => (
-        <div style={props.style}>
-            <MessageBubble
-                message={messages[props.index]}
-                isOwn={messages[props.index].sender.id === user?.user_id}
-            />
-        </div>
-    ), [messages, user?.user_id]);
+    // 虚拟列表行渲染
+    const RowComponent = useCallback((props: any) => {
+        const msg = messages[props.index];
+        const rowRef = useRef<HTMLDivElement>(null);
+
+        // 核心：将 DOM 节点传递给高度观察器
+        useEffect(() => {
+            if (rowRef.current) {
+                return dynamicRowHeight.observeRowElements([rowRef.current]);
+            }
+        }, [props.index]);
+
+        return (
+            <div
+                ref={rowRef}
+                style={props.style}
+                className="py-1"
+                data-index={props.index}
+            >
+                <MessageBubble
+                    message={msg}
+                    isOwn={msg.sender.id === user?.user_id}
+                />
+            </div>
+        );
+    }, [messages, user?.user_id, dynamicRowHeight]);
 
     return (
         <div className="flex flex-col h-full bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -142,6 +172,14 @@ export const ChatInterface: React.FC<Props> = ({
                 <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
                 <LLMSelector />
             </div>
+
+            {/* EDIPT 阶段横幅 */}
+            {currentStage && (
+                <div className="px-4 py-1.5 bg-gradient-to-r from-indigo-50 to-violet-50 border-b border-indigo-100 flex items-center gap-2">
+                    <span className="text-[10px] font-medium text-indigo-400">当前阶段</span>
+                    <span className="text-xs font-bold text-indigo-600 px-2 py-0.5 bg-white border border-indigo-200 rounded-full">{currentStage}</span>
+                </div>
+            )}
 
             {/* Messages 区域 */}
             <div
@@ -170,7 +208,7 @@ export const ChatInterface: React.FC<Props> = ({
                     <List
                         listRef={listRef}
                         rowCount={messages.length}
-                        rowHeight={(index: number) => estimateRowHeight(messages[index])}
+                        rowHeight={dynamicRowHeight}
                         rowComponent={RowComponent}
                         rowProps={{}}
                         overscanCount={5}
@@ -266,6 +304,7 @@ export const ChatInterface: React.FC<Props> = ({
                     isSearchEnabled={isSearchEnabled}
                     onToggleSearch={() => setIsSearchEnabled(!isSearchEnabled)}
                     disabled={disabled}
+                    onRequestDrawing={onRequestDrawing}
                 />
             </div>
         </div>

@@ -6,10 +6,8 @@ export default defineConfig({
     optimizeDeps: {
         include: ['react-window'],
     },
-    build: {
-        commonjsOptions: {
-            include: [/react-window/, /node_modules/],
-        },
+	resolve: {
+        dedupe: ['react', 'react-dom'],       // 确保整个应用使用单一 React 实例
     },
     server: {
         proxy: {

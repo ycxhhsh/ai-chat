@@ -136,7 +136,12 @@ async def handle_chat_send(
 
     # 检测是否需要 AI 回复
     mentions = metadata.get("mentions", [])
-    has_ai_mention = "@ai" in content.lower() or "ai" in mentions
+    has_ai_mention = (
+        "@ai" in content.lower()
+        or "ai" in mentions
+        or "@ai助手" in content.lower()
+        or "ai助手" in mentions
+    )
 
     if has_ai_mention or target_user == "ai":
         # Risk 4: WS AI 请求限流 — 滑动窗口（5 次/60s/user）
@@ -166,7 +171,7 @@ async def handle_chat_send(
             )
 
         asyncio.create_task(
-            _trigger_ai_reply(
+            _trigger_ai_reply_with_stage(
                 session_id=session_id,
                 user_message=content,
                 user_info=user_info,
@@ -180,6 +185,24 @@ async def handle_chat_send(
                 enable_search=data.get("enable_search", False),
             )
         )
+
+async def _trigger_ai_reply_with_stage(session_id: str, **kwargs) -> None:
+    current_stage = "Empathy"
+    try:
+        from app.db.session import AsyncSessionLocal
+        from app.models.group import Group
+        from sqlalchemy import select
+        async with AsyncSessionLocal() as db:
+            stage_res = await db.execute(select(Group.current_stage).where(Group.id == session_id))
+            stage = stage_res.scalar_one_or_none()
+            if stage:
+                current_stage = stage
+    except Exception:
+        pass
+
+    kwargs["session_id"] = session_id
+    kwargs["current_stage"] = current_stage
+    await _trigger_ai_reply(**kwargs)
 
 
 async def _save_message_and_ack(
@@ -195,8 +218,14 @@ async def _save_message_and_ack(
     try:
         from app.db.session import AsyncSessionLocal
         from app.models.message import Message
+        from app.models.group import Group
+        from sqlalchemy import select
 
         async with AsyncSessionLocal() as db:
+            # fetch current stage
+            stage_res = await db.execute(select(Group.current_stage).where(Group.id == session_id))
+            current_stage = stage_res.scalar_one_or_none()
+
             msg = Message(
                 message_id=message["message_id"],
                 session_id=message["session_id"],
@@ -206,6 +235,7 @@ async def _save_message_and_ack(
                 metadata_info=message.get("metadata_info", {}),
                 recipient_id=message.get("recipient_id"),
                 conversation_id=message.get("conversation_id"),
+                edipt_stage=current_stage,
             )
             db.add(msg)
             await db.commit()
@@ -273,6 +303,7 @@ async def _trigger_ai_reply(
     quoted_text: str | None = None,
     is_deep_thinking: bool = False,
     enable_search: bool = False,
+    current_stage: str = "Empathy",
 ) -> None:
     """触发 AI 回复 — 铁律 1+3：三明治上下文 + Redis 队列。"""
     from app.infra.ai_queue import get_queue
@@ -309,6 +340,7 @@ async def _trigger_ai_reply(
         uploaded_file_text=uploaded_file_text,
         user_id=user_info.get("user_id"),
         conversation_id=conversation_id,
+        current_stage=current_stage,
     )
 
     queue = get_queue()
@@ -409,5 +441,140 @@ async def _generate_conversation_title(
     except Exception as e:
         logger.warning("Failed to generate title: %s", e)
         return None
+
+async def handle_stage_update(
+    websocket: WebSocket,
+    session_id: str,
+    data: dict[str, Any],
+    manager: ConnectionManager,
+) -> None:
+    """处理 STAGE_UPDATE 事件（教师修改进度）。"""
+    user_info = manager.get_user_info(websocket)
+    if not user_info or user_info.get("role") != "teacher":
+        await manager.send_error(websocket, "Permission denied")
+        return
+
+    new_stage = data.get("stage")
+    if not new_stage:
+        await manager.send_error(websocket, "Stage is missing")
+        return
+
+    # 广播进度信息
+    await manager.broadcast(
+        session_id, "STAGE_UPDATE", {"stage": new_stage, "updated_by": user_info["user_id"]}
+    )
+
+    # 异步落库组进度
+    asyncio.create_task(
+        _save_group_stage(session_id, new_stage)
+    )
+
+async def _save_group_stage(group_id: str, stage: str) -> None:
+    """保存进度到数据库。"""
+    try:
+        from app.db.session import AsyncSessionLocal
+        from app.models.group import Group
+        from sqlalchemy import update
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                update(Group).where(Group.id == group_id).values(current_stage=stage)
+            )
+            await db.commit()
+    except Exception as e:
+        logger.error("Failed to update group stage: %s", e)
+
+
+async def handle_design_drawing(
+    websocket: WebSocket,
+    session_id: str,
+    data: dict[str, Any],
+    manager: ConnectionManager,
+) -> None:
+    """处理发起画图请求。"""
+    user_info = manager.get_user_info(websocket)
+    if not user_info:
+        await manager.send_error(websocket, "Not authenticated")
+        return
+    api_provider = data.get("api_provider", "deepseek")
+    custom_prompt = data.get("custom_prompt")
+
+    from app.infra.ai_queue import get_queue
+    from app.llm.context_builder import _load_recent_messages
+
+    queue = get_queue()
+
+    try:
+        # Load recent group messages to extract consensus
+        messages = await _load_recent_messages(session_id, limit=20)
+        formatted_msgs = []
+        for msg in messages:
+            sender = msg.sender if isinstance(msg.sender, dict) else {}
+            name = sender.get("name", "Unknown")
+            formatted_msgs.append({"role": "user", "content": f"[{name}]: {msg.content}"})
+
+        # Push to REDIS
+        task_id = await queue.push_drawing_task(
+            session_id=session_id,
+            user_info=user_info,
+            messages=formatted_msgs,
+            api_provider=api_provider,
+            custom_prompt=custom_prompt,
+        )
+        logger.info("Design drawing task %s queued for session=%s", task_id, session_id)
+    except Exception as e:
+        logger.exception("Failed to queue drawing task: %s", e)
+        await manager.send_error(websocket, f"Failed to start drawing: {e}", code="DRAWING_ERROR")
+
+
+async def handle_prepare_drawing(
+    websocket: WebSocket,
+    session_id: str,
+    data: dict[str, Any],
+    manager: ConnectionManager,
+) -> None:
+    """处理预发画图请求（提炼 prompt）。"""
+    user_info = manager.get_user_info(websocket)
+    if not user_info:
+        await manager.send_error(websocket, "Not authenticated")
+        return
+    llm_provider = data.get("llm_provider", "deepseek")
+
+    from app.llm.context_builder import _load_recent_messages
+    from app.llm.factory import get_llm_client
+
+    try:
+        messages = await _load_recent_messages(session_id, limit=20)
+        chat_context = "\\n".join([
+            f"[{msg.sender.get('name', 'Unknown') if isinstance(msg.sender, dict) else 'Unknown'}]: {msg.content}"
+            for msg in messages
+        ])
+
+        system_prompt = (
+            "你是一个专业的绘画提示词专家。请根据以下小组成员的对话内容，"
+            "提取出他们讨论的设计要素（如对象、材质、颜色、风格、背景等），"
+            "并整合成一段连贯、详细的画面描述提示词（不超过100字）。直接输出提示词，不需要任何多余解释。"
+        )
+
+        llm_msgs = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"小组对话:\\n{chat_context}"}
+        ]
+
+        client = get_llm_client(llm_provider)
+        prompt_parts: list[str] = []
+        async for chunk in client.stream_chat(messages=llm_msgs, temperature=0.7):
+            prompt_parts.append(chunk)
+
+        result_prompt = "".join(prompt_parts).strip()
+
+        await manager.send_to_user(
+            session_id, user_info["user_id"],
+            "DRAWING_PROMPT_READY",
+            {"prompt": result_prompt}
+        )
+
+    except Exception as e:
+        logger.exception("Failed to prepare drawing prompt: %s", e)
+        await manager.send_error(websocket, f"Failed to prepare drawing: {e}", code="DRAWING_PREPARE_ERROR")
 
 

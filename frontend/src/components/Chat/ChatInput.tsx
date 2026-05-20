@@ -5,7 +5,7 @@
  * 输入 @ 时弹出成员下拉列表（含 @AI）。
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, X, MessageSquareQuote, Bot, Brain, Globe } from 'lucide-react';
+import { Send, X, MessageSquareQuote, Bot, Brain, Globe, PenLine } from 'lucide-react';
 import { useScaffoldStore } from '../../store/useScaffoldStore';
 import { useGroupStore } from '../../store/useGroupStore';
 import { generateUUID } from '../../utils/uuid';
@@ -20,6 +20,7 @@ interface Props {
     onToggleDeepThinking?: () => void;
     isSearchEnabled?: boolean;
     onToggleSearch?: () => void;
+    onRequestDrawing?: () => void;
 }
 
 interface Member {
@@ -28,7 +29,7 @@ interface Member {
     role: string;
 }
 
-export const ChatInput: React.FC<Props> = ({ onSend, disabled, isAiChannel, isDeepThinking, onToggleDeepThinking, isSearchEnabled, onToggleSearch }) => {
+export const ChatInput: React.FC<Props> = ({ onSend, disabled, isAiChannel, isDeepThinking, onToggleDeepThinking, isSearchEnabled, onToggleSearch, onRequestDrawing }) => {
     const { inputMessage, setInputMessage, activeScaffoldId, setActiveScaffold, scaffolds } = useScaffoldStore();
     const { currentGroupId } = useGroupStore();
     const [localInput, setLocalInput] = useState('');
@@ -142,6 +143,19 @@ export const ChatInput: React.FC<Props> = ({ onSend, disabled, isAiChannel, isDe
             metadata.enable_search = true;
         }
 
+        const drawingIntentRegex = /(画[一两几]?[个张幅]草?图|生图|生成[草设计]?图|出图|帮我画|生成一下草图)/;
+        if (drawingIntentRegex.test(content) && onRequestDrawing) {
+            onSend(content, metadata);
+            onRequestDrawing();
+            setLocalInput('');
+            setInputMessage('');
+            setActiveScaffold(null);
+            setQuotedText(null);
+            setShowMention(false);
+            if (textareaRef.current) textareaRef.current.style.height = 'auto';
+            return;
+        }
+
         onSend(content, metadata);
         setLocalInput('');
         setInputMessage('');
@@ -245,16 +259,28 @@ export const ChatInput: React.FC<Props> = ({ onSend, disabled, isAiChannel, isDe
 
             {/* ── 输入区域 ── */}
             <div className="flex items-end gap-2 rounded-2xl bg-gray-50 border border-gray-200 focus-within:border-blue-400 focus-within:bg-white focus-within:shadow-sm transition-all px-3 py-2">
-                {/* @AI 快捷按钮（仅小组频道） */}
+                {/* @AI 快捷按鈕（仅小组频道） */}
                 {!isAiChannel && (
+                    <>
                     <button
                         onClick={handleAtAiClick}
                         className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-violet-600 bg-violet-50 hover:bg-violet-100 rounded-full transition-colors flex-shrink-0 border border-violet-200"
-                        title="呼叫 AI 助教"
+                        title="呼叫AI助教"
                     >
                         <Bot className="w-3 h-3" />
                         @AI
                     </button>
+                    {onRequestDrawing && (
+                        <button
+                            onClick={onRequestDrawing}
+                            className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-teal-600 bg-teal-50 hover:bg-teal-100 rounded-full transition-colors flex-shrink-0 border border-teal-200"
+                            title="生成设计草图"
+                        >
+                            <PenLine className="w-3 h-3" />
+                            生成草图
+                        </button>
+                    )}
+                    </>
                 )}
                 <textarea
                     ref={textareaRef}

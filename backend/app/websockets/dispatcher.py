@@ -11,7 +11,7 @@ from fastapi import WebSocket
 
 from app.schemas.websocket import WSEvent
 from app.websockets.manager import ConnectionManager
-from app.websockets.handlers.chat import handle_chat_send
+from app.websockets.handlers.chat import handle_chat_send, handle_stage_update, handle_design_drawing, handle_prepare_drawing
 from app.websockets.handlers.scaffold import handle_scaffold_set_active
 from app.websockets.handlers.mindmap import (
     handle_mindmap_generate,
@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 # 事件 → 处理函数的注册表
 _HANDLERS = {
     "CHAT_SEND": handle_chat_send,
+    "STAGE_UPDATE": handle_stage_update,
+    "DESIGN_DRAWING": handle_design_drawing,
+    "PREPARE_DRAWING": handle_prepare_drawing,
     "SCAFFOLD_SET_ACTIVE": handle_scaffold_set_active,
     "MINDMAP_GENERATE": handle_mindmap_generate,
     "MINDMAP_EDIT": handle_mindmap_edit,

@@ -4,11 +4,12 @@ from __future__ import annotations
 import csv
 import io
 import logging
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select, case, literal_column, cast, String as SAString
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,9 +18,19 @@ from app.core.dependencies import get_db, require_teacher
 from app.models.message import Message
 from app.models.user import User
 from app.models.group import Group, GroupMember
-from app.models.assignment import Assignment
+from app.models.assignment import (
+    Assignment,
+    AssignmentPeerReview,
+    AssignmentSelfReview,
+    AssignmentTask,
+    AssignmentTaskTarget,
+)
 from app.models.ai_conversation import AiConversation
 from app.db.json_utils import jq
+from app.services.peer_review_assignment import (
+    SubmissionCandidate,
+    build_balanced_peer_review_pairs,
+)
 from app.services.analytics_service import (
     build_participation_heatmap,
     build_word_cloud,
@@ -231,7 +242,346 @@ async def list_sessions(
     }
 
 
-# ────────────────────── 作业列表 ──────────────────────
+# ────────────────────── 作业任务 / 作业列表 ──────────────────────
+
+
+class AssignmentTaskCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    description: str | None = None
+    target_student_ids: list[str] = Field(..., min_length=1)
+    peer_review_count: int = Field(5, ge=1, le=10)
+
+
+def _assignment_payload(a: Assignment | None) -> dict | None:
+    if a is None:
+        return None
+    return {
+        "assignment_id": str(a.assignment_id),
+        "task_id": a.task_id,
+        "session_id": a.session_id,
+        "student_id": a.student_id,
+        "content": a.content,
+        "file_url": a.file_url,
+        "status": a.status,
+        "ai_review": a.ai_review,
+        "teacher_review": a.teacher_review,
+        "created_at": a.created_at.isoformat(),
+    }
+
+
+def _self_review_payload(review: AssignmentSelfReview | None) -> dict | None:
+    if review is None:
+        return None
+    return {
+        "id": review.id,
+        "assignment_id": review.assignment_id,
+        "student_id": review.student_id,
+        "score": review.score,
+        "comment": review.comment,
+        "created_at": review.created_at.isoformat(),
+        "updated_at": review.updated_at.isoformat(),
+    }
+
+
+def _peer_review_payload(
+    review: AssignmentPeerReview,
+    reviewer: User | None = None,
+    reviewee: User | None = None,
+) -> dict:
+    return {
+        "id": review.id,
+        "task_id": review.task_id,
+        "assignment_id": review.assignment_id,
+        "reviewer_id": review.reviewer_id,
+        "reviewer_name": reviewer.name if reviewer else "",
+        "reviewer_email": reviewer.email if reviewer else "",
+        "reviewee_id": review.reviewee_id,
+        "reviewee_name": reviewee.name if reviewee else "",
+        "reviewee_email": reviewee.email if reviewee else "",
+        "score": review.score,
+        "comment": review.comment,
+        "status": review.status,
+        "assigned_at": review.assigned_at.isoformat(),
+        "submitted_at": (
+            review.submitted_at.isoformat() if review.submitted_at else None
+        ),
+    }
+
+
+def _task_base_payload(task: AssignmentTask) -> dict:
+    return {
+        "task_id": task.task_id,
+        "title": task.title,
+        "description": task.description,
+        "status": task.status,
+        "peer_review_count": task.peer_review_count,
+        "created_by": task.created_by,
+        "peer_review_started_at": (
+            task.peer_review_started_at.isoformat()
+            if task.peer_review_started_at else None
+        ),
+        "created_at": task.created_at.isoformat(),
+        "updated_at": task.updated_at.isoformat(),
+    }
+
+
+async def _assignment_task_summary(
+    db: AsyncSession,
+    task: AssignmentTask,
+) -> dict:
+    target_count = (
+        await db.execute(
+            select(func.count()).select_from(AssignmentTaskTarget)
+            .where(AssignmentTaskTarget.task_id == task.task_id)
+        )
+    ).scalar() or 0
+    submitted_count = (
+        await db.execute(
+            select(func.count()).select_from(Assignment)
+            .where(Assignment.task_id == task.task_id)
+        )
+    ).scalar() or 0
+    self_review_count = (
+        await db.execute(
+            select(func.count()).select_from(AssignmentSelfReview)
+            .where(AssignmentSelfReview.task_id == task.task_id)
+        )
+    ).scalar() or 0
+    peer_total = (
+        await db.execute(
+            select(func.count()).select_from(AssignmentPeerReview)
+            .where(AssignmentPeerReview.task_id == task.task_id)
+        )
+    ).scalar() or 0
+    peer_completed = (
+        await db.execute(
+            select(func.count()).select_from(AssignmentPeerReview)
+            .where(
+                AssignmentPeerReview.task_id == task.task_id,
+                AssignmentPeerReview.status == "submitted",
+            )
+        )
+    ).scalar() or 0
+    teacher_reviewed_count = (
+        await db.execute(
+            select(func.count()).select_from(Assignment)
+            .where(
+                Assignment.task_id == task.task_id,
+                Assignment.teacher_review.is_not(None),
+            )
+        )
+    ).scalar() or 0
+
+    return {
+        **_task_base_payload(task),
+        "target_count": target_count,
+        "submitted_count": submitted_count,
+        "missing_count": max(target_count - submitted_count, 0),
+        "self_review_count": self_review_count,
+        "peer_review_total": peer_total,
+        "peer_review_completed": peer_completed,
+        "teacher_reviewed_count": teacher_reviewed_count,
+    }
+
+
+async def _get_assignment_task_or_404(
+    db: AsyncSession,
+    task_id: str,
+) -> AssignmentTask:
+    result = await db.execute(
+        select(AssignmentTask).where(AssignmentTask.task_id == task_id)
+    )
+    task = result.scalar_one_or_none()
+    if task is None:
+        raise HTTPException(404, "作业任务不存在")
+    return task
+
+
+@router.get("/assignment-tasks")
+async def list_assignment_tasks(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _teacher: Annotated[User, Depends(require_teacher)],
+):
+    """教师查看作业任务列表。"""
+    result = await db.execute(
+        select(AssignmentTask).order_by(AssignmentTask.created_at.desc())
+    )
+    tasks = result.scalars().all()
+    return [await _assignment_task_summary(db, task) for task in tasks]
+
+
+@router.post("/assignment-tasks")
+async def create_assignment_task(
+    body: AssignmentTaskCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    teacher: Annotated[User, Depends(require_teacher)],
+):
+    """教师筛选学生并发布作业任务。"""
+    target_ids = list(dict.fromkeys(body.target_student_ids))
+    result = await db.execute(
+        select(User).where(User.user_id.in_(target_ids), User.role == "student")
+    )
+    students = result.scalars().all()
+    found_ids = {s.user_id for s in students}
+    missing_ids = [sid for sid in target_ids if sid not in found_ids]
+    if missing_ids:
+        raise HTTPException(400, f"存在无效学生 ID: {', '.join(missing_ids)}")
+
+    task = AssignmentTask(
+        title=body.title.strip(),
+        description=body.description.strip() if body.description else None,
+        status="published",
+        peer_review_count=body.peer_review_count,
+        created_by=teacher.user_id,
+    )
+    db.add(task)
+    await db.flush()
+    for student_id in target_ids:
+        db.add(AssignmentTaskTarget(task_id=task.task_id, student_id=student_id))
+    await db.commit()
+    await db.refresh(task)
+    return await _assignment_task_summary(db, task)
+
+
+@router.get("/assignment-tasks/{task_id}")
+async def get_assignment_task_detail(
+    task_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _teacher: Annotated[User, Depends(require_teacher)],
+):
+    """教师查看单个作业任务的实名提交、自评和互评情况。"""
+    task = await _get_assignment_task_or_404(db, task_id)
+    target_result = await db.execute(
+        select(AssignmentTaskTarget, User)
+        .join(User, User.user_id == AssignmentTaskTarget.student_id)
+        .where(AssignmentTaskTarget.task_id == task_id)
+        .order_by(User.name.asc())
+    )
+    target_rows = target_result.all()
+    target_ids = [target.student_id for target, _user in target_rows]
+
+    assignment_result = await db.execute(
+        select(Assignment).where(Assignment.task_id == task_id)
+    )
+    assignments = assignment_result.scalars().all()
+    assignments_by_student = {a.student_id: a for a in assignments}
+
+    self_result = await db.execute(
+        select(AssignmentSelfReview).where(AssignmentSelfReview.task_id == task_id)
+    )
+    self_reviews = self_result.scalars().all()
+    self_by_student = {r.student_id: r for r in self_reviews}
+
+    peer_result = await db.execute(
+        select(AssignmentPeerReview, User)
+        .join(User, User.user_id == AssignmentPeerReview.reviewer_id)
+        .where(AssignmentPeerReview.task_id == task_id)
+        .order_by(AssignmentPeerReview.assigned_at.asc())
+    )
+    reviewer_user_by_id = {
+        review.reviewer_id: reviewer for review, reviewer in peer_result.all()
+    }
+
+    reviewee_users = {user.user_id: user for _target, user in target_rows}
+    peer_result = await db.execute(
+        select(AssignmentPeerReview).where(AssignmentPeerReview.task_id == task_id)
+    )
+    peer_reviews = peer_result.scalars().all()
+    peer_by_reviewee: dict[str, list[dict]] = {}
+    peer_by_reviewer: dict[str, list[dict]] = {}
+    for review in peer_reviews:
+        payload = _peer_review_payload(
+            review,
+            reviewer=reviewer_user_by_id.get(review.reviewer_id),
+            reviewee=reviewee_users.get(review.reviewee_id),
+        )
+        peer_by_reviewee.setdefault(review.reviewee_id, []).append(payload)
+        peer_by_reviewer.setdefault(review.reviewer_id, []).append(payload)
+
+    targets = []
+    for target, student in target_rows:
+        assignment = assignments_by_student.get(target.student_id)
+        targets.append({
+            "student_id": target.student_id,
+            "student_name": student.name,
+            "student_email": student.email,
+            "assigned_at": target.assigned_at.isoformat(),
+            "assignment": _assignment_payload(assignment),
+            "self_review": _self_review_payload(
+                self_by_student.get(target.student_id)
+            ),
+            "peer_reviews_received": peer_by_reviewee.get(target.student_id, []),
+            "peer_reviews_assigned": peer_by_reviewer.get(target.student_id, []),
+        })
+
+    return {
+        "task": await _assignment_task_summary(db, task),
+        "target_student_ids": target_ids,
+        "targets": targets,
+    }
+
+
+@router.post("/assignment-tasks/{task_id}/start-peer-review")
+async def start_peer_review(
+    task_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _teacher: Annotated[User, Depends(require_teacher)],
+):
+    """教师手动开启互评并生成均衡匿名分配。"""
+    task = await _get_assignment_task_or_404(db, task_id)
+    existing_count = (
+        await db.execute(
+            select(func.count()).select_from(AssignmentPeerReview)
+            .where(AssignmentPeerReview.task_id == task_id)
+        )
+    ).scalar() or 0
+    if existing_count:
+        return await _assignment_task_summary(db, task)
+    if task.status != "published":
+        raise HTTPException(400, "只有已发布且未开启互评的任务可以开启互评")
+
+    target_result = await db.execute(
+        select(AssignmentTaskTarget).where(AssignmentTaskTarget.task_id == task_id)
+    )
+    targets = target_result.scalars().all()
+    reviewer_ids = [target.student_id for target in targets]
+
+    assignment_result = await db.execute(
+        select(Assignment).where(Assignment.task_id == task_id)
+    )
+    assignments = assignment_result.scalars().all()
+    submissions = [
+        SubmissionCandidate(
+            assignment_id=str(assignment.assignment_id),
+            student_id=assignment.student_id,
+        )
+        for assignment in assignments
+    ]
+
+    try:
+        pairs = build_balanced_peer_review_pairs(
+            reviewer_ids=reviewer_ids,
+            submissions=submissions,
+            peer_review_count=task.peer_review_count,
+            seed=task.task_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    for pair in pairs:
+        db.add(
+            AssignmentPeerReview(
+                task_id=task_id,
+                assignment_id=pair.assignment_id,
+                reviewer_id=pair.reviewer_id,
+                reviewee_id=pair.reviewee_id,
+            )
+        )
+    task.status = "peer_review"
+    task.peer_review_started_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(task)
+    return await _assignment_task_summary(db, task)
 
 @router.get("/assignments")
 async def list_assignments(
@@ -249,6 +599,7 @@ async def list_assignments(
     return [
         {
             "assignment_id": str(a.assignment_id),
+            "task_id": a.task_id,
             "session_id": a.session_id,
             "student_id": a.student_id,
             "student_name": u.name if u else "未知",
@@ -841,7 +1192,9 @@ async def export_unified_csv(
         if is_personal:
             readable_id = f"MSG-{seq:03d}"
         else:
-            readable_id = f"MSG-{gname}-{seq:03d}" if gname else f"MSG-{seq:03d}"
+            if not gname:
+                gname = f"已解散小组({str(session_key)[-6:]})"
+            readable_id = f"MSG-{gname}-{seq:03d}"
 
         # 相对分钟数
         rel_min = ""

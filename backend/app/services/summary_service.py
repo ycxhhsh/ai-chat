@@ -20,6 +20,16 @@ SUMMARY_PROMPT = (
     "对话内容：\n{conversation_text}"
 )
 
+# 工作记忆提炼 prompt
+WORKING_MEMORY_PROMPT = (
+    "你是一位记忆管理专家。请根据以下对话历史，提炼并更新该学生的【学习足迹与当前共识】。\n"
+    "输出要求：\n"
+    "1. 概括已讨论的核心知识点和学生展示出的理解水平。\n"
+    "2. 记录学生提出的关键疑问或未解决的问题。\n"
+    "3. 保持简练（200字以内），逻辑清晰。\n\n"
+    "对话历史：\n{conversation_text}"
+)
+
 
 async def generate_conversation_summary(
     conversation_id: str,
@@ -128,3 +138,78 @@ async def load_user_summaries(
     except Exception as e:
         logger.warning("Failed to load user summaries: %s", e)
         return []
+
+
+async def update_working_memory(
+    conversation_id: str,
+    llm_provider: str = "deepseek",
+) -> Optional[str]:
+    """异步更新对话的“工作记忆”。
+
+    触发条件：总消息数 > 20 且距上次摘要新增消息 > 10。
+    生成摘要并持久化到 AiConversation.working_memory。
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.models.ai_conversation import AiConversation
+    from app.llm.factory import get_llm_client
+
+    try:
+        async with AsyncSessionLocal() as db:
+            # 1. 获取会话信息
+            result = await db.execute(
+                select(AiConversation)
+                .where(AiConversation.conversation_id == conversation_id)
+            )
+            convo = result.scalar_one_or_none()
+            if not convo:
+                return None
+
+            current_count = convo.message_count
+            last_summary_count = convo.msg_count_at_summary
+
+            # 触发判断
+            if current_count < 20 or (current_count - last_summary_count < 10):
+                return convo.working_memory
+
+            # 2. 加载消息（取最新的 100 条）
+            result = await db.execute(
+                select(Message)
+                .where(Message.conversation_id == conversation_id)
+                .order_by(Message.created_at.asc())
+                .limit(100)
+            )
+            msgs = result.scalars().all()
+
+            lines = []
+            for m in msgs:
+                sender = m.sender if isinstance(m.sender, dict) else {}
+                role = "AI" if sender.get("role") == "ai" else sender.get("name", "学生")
+                content = m.content[:200] + ("..." if len(m.content) > 200 else "")
+                lines.append(f"[{role}] {content}")
+
+            conversation_text = "\n".join(lines)
+
+            # 3. 调用 LLM
+            client = get_llm_client(llm_provider)
+            prompt = WORKING_MEMORY_PROMPT.format(conversation_text=conversation_text)
+
+            response = await client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=400,
+                temperature=0.3,
+            )
+            summary_text = response.strip()
+
+            if summary_text:
+                convo.working_memory = summary_text
+                convo.msg_count_at_summary = current_count
+                await db.commit()
+                logger.info(
+                    "Updated working memory for conversation %s (count=%d)",
+                    conversation_id, current_count,
+                )
+                return summary_text
+    except Exception as e:
+        logger.warning("Working memory update failed for %s: %s", conversation_id, e)
+
+    return None

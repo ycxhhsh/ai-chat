@@ -33,7 +33,15 @@ class AiConversation(Base):
     message_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )
+    # P1: 长对话压缩支持
+    working_memory: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )
+    msg_count_at_summary: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
     created_at: Mapped[datetime] = mapped_column(
+
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),

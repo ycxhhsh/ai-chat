@@ -9,16 +9,17 @@
  * - SESSION_JOINED 初始化支架 + 历史消息
  * - CHAT_ACK 消息确认
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import { useAuthStore } from '../store/useAuthStore';
+import { useGroupStore } from '../store/useGroupStore';
 import { useChatStore } from '../store/useChatStore';
 import { useScaffoldStore } from '../store/useScaffoldStore';
 import { useMindMapStore } from '../store/useMindMapStore';
 import type { ChatMessage } from '../types';
 import { generateUUID } from '../utils/uuid';
 
-// 心跳配置 — 配合后端 15s 间隔，45s 未收到 PING 即视为断连
-const HEARTBEAT_TIMEOUT = 45_000;
+// 心跳配置 — 增加容忍度以避免浏览器后台挂起导致的误判断连
+const HEARTBEAT_TIMEOUT = 120_000;
 
 // 重连配置 — 首次重连 500ms，减少感知延迟
 const RECONNECT_BASE_MS = 500;
@@ -64,7 +65,7 @@ export function useWebSocket(sessionId: string | null) {
         }
     }, []);
 
-    // 重置心跳超时（收到服务端 PING 后调用）
+    // 重置心跳超时（收到服务端消息/PING 后调用）
     const resetHeartbeatTimeout = useCallback(() => {
         if (heartbeatTimeoutRef.current) {
             clearTimeout(heartbeatTimeoutRef.current);
@@ -80,20 +81,33 @@ export function useWebSocket(sessionId: string | null) {
     // 启动心跳
     const startHeartbeat = useCallback(() => {
         stopHeartbeat();
+        // 客户端主动发心跳保持 Nginx/TCP 活跃
+        heartbeatTimerRef.current = setInterval(() => {
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+                wsRef.current.send('{"event":"PING","data":{}}');
+            }
+        }, 15_000);
         resetHeartbeatTimeout();
     }, [stopHeartbeat, resetHeartbeatTimeout]);
 
     const handleEvent = useCallback((eventName: string, data: Record<string, unknown>) => {
+        // 收到任何事件都说明连接存活，可重置超时
+        resetHeartbeatTimeout();
+
         switch (eventName) {
             case 'PING':
-                // 收到服务端心跳，回复 PONG 并重置超时
+                // 收到服务端心跳，回复 PONG
                 if (wsRef.current?.readyState === WebSocket.OPEN) {
                     wsRef.current.send('{"event":"PONG","data":{}}');
                 }
-                resetHeartbeatTimeout();
                 break;
 
             case 'SESSION_JOINED':
+                if (data.current_stage) {
+                    const currentSessionId = data.session_id as string || sessionId || '';
+                    useGroupStore.getState().updateGroupStage(currentSessionId, data.current_stage as string);
+                    window.dispatchEvent(new CustomEvent('edipt-stage-update', { detail: data.current_stage }));
+                }
                 if (data.available_providers) {
                     setAvailableProviders(data.available_providers as Array<{ name: string; display_name: string; model: string }>);
                 }
@@ -243,6 +257,52 @@ export function useWebSocket(sessionId: string | null) {
                 }
                 break;
 
+            case 'STAGE_UPDATE': {
+                // Design Thinking EDIPT 阶段切换广播
+                const newStage = data.stage as string;
+                const groupId = data.group_id as string;
+                if (newStage) {
+                    if (groupId) {
+                        useGroupStore.getState().updateGroupStage(groupId, newStage);
+                    }
+                    window.dispatchEvent(new CustomEvent('edipt-stage-update', { detail: newStage }));
+                }
+                break;
+            }
+
+            case 'DRAWING_DONE': {
+                // 绘图任务完成 — 插入草图
+                const drawingContent = data.content as string;
+                if (drawingContent) {
+                    const drawingSessionId = (data.session_id as string) || sessionId || '';
+                    const isPrivate = drawingSessionId === useAuthStore.getState().user?.user_id;
+                    const imgMsg: ChatMessage = {
+                        message_id: (data.task_id as string) || generateUUID(),
+                        session_id: drawingSessionId,
+                        sender: { id: 'ai', name: 'AI 助教', role: 'ai' },
+                        content: drawingContent,
+                        timing: { absolute_time: new Date().toISOString(), relative_minute: 0 },
+                        metadata_info: { llm_provider: 'drawing' } as unknown as import('../types').MessageMetadata,
+                        created_at: new Date().toISOString(),
+                        recipient_id: isPrivate ? useAuthStore.getState().user?.user_id : null,
+                        status: 'sent',
+                    };
+                    if (isPrivate) {
+                        useChatStore.getState().addAiMessage(imgMsg);
+                    } else {
+                        addGroupMessage(drawingSessionId, imgMsg);
+                    }
+                }
+                break;
+            }
+
+            case 'DRAWING_PROMPT_READY': {
+                if (data.prompt) {
+                    window.dispatchEvent(new CustomEvent('drawing-prompt-ready', { detail: data.prompt }));
+                }
+                break;
+            }
+
             case 'MINDMAP_DRAFT': {
                 // 铁律 2：AI 生成的脑图作为草稿展示，不直接合入
                 const draftNodes = data.nodes as import('../types').MindMapNode[];
@@ -286,6 +346,15 @@ export function useWebSocket(sessionId: string | null) {
                 break;
             }
 
+            case 'PONG':
+                // 客户端发出的 PING 的相应回复，直接忽略
+                break;
+
+            case 'USER_JOINED':
+            case 'SESSION_LEFT':
+                // 用户进出事件，无需强制重做逻辑，可以直接忽略
+                break;
+
             case 'ERROR':
                 console.error('[WS] Server error:', data);
                 if (typeof data === 'object' && data && 'message' in data) {
@@ -300,10 +369,12 @@ export function useWebSocket(sessionId: string | null) {
                 break;
 
             default:
-                console.log('[WS] Unhandled:', eventName, data);
+                // console.log('[WS] Unhandled:', eventName, data);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [resetHeartbeatTimeout]);
+
+    const pendingMessagesRef = useRef<{ event: string; data: Record<string, unknown> }[]>([]);
 
     const connect = useCallback(() => {
         // 清理残留连接后再建新连接
@@ -318,6 +389,16 @@ export function useWebSocket(sessionId: string | null) {
 
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         let url = `${protocol}//${window.location.host}/ws/${sessionId}?token=${token}`;
+
+        // 切换 session 时清空游标
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const prevSessionId = (wsRef as any)._prevSessionId;
+        if (prevSessionId !== sessionId) {
+            lastMsgTimestampRef.current = null;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (wsRef as any)._prevSessionId = sessionId;
+        }
+
         // 重连时附加游标，后端只返回游标之后的增量消息
         if (lastMsgTimestampRef.current) {
             url += `&cursor=${encodeURIComponent(lastMsgTimestampRef.current)}`;
@@ -333,6 +414,15 @@ export function useWebSocket(sessionId: string | null) {
             setConnectionState('connected');
             reconnectAttemptRef.current = 0; // 重置重连计数
             startHeartbeat();
+
+            // 发送之前堆积在队列中的消息
+            if (pendingMessagesRef.current.length > 0) {
+                console.log(`[WS] Flushing ${pendingMessagesRef.current.length} pending messages`);
+                pendingMessagesRef.current.forEach((msg) => {
+                    ws.send(JSON.stringify(msg));
+                });
+                pendingMessagesRef.current = [];
+            }
         };
 
         ws.onmessage = (event) => {
@@ -377,17 +467,16 @@ export function useWebSocket(sessionId: string | null) {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
             wsRef.current.send(JSON.stringify({ event, data }));
         } else {
-            console.warn('[WS] Not connected, cannot send:', event);
+            console.log('[WS] Not connected, queueing message:', event);
+            // 放入积压队列，等下一次 onopen 再发
+            pendingMessagesRef.current.push({ event, data });
+
             // 自动触发重连
-            connect();
-            // 用户可见提示
-            const toast = document.createElement('div');
-            toast.textContent = '⚠️ 连接已断开，正在重连...';
-            toast.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;padding:10px 20px;background:#f59e0b;color:white;border-radius:8px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,0.15);transition:opacity 0.3s';
-            document.body.appendChild(toast);
-            setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 3000);
+            if (connectionState !== 'connecting') {
+                connect();
+            }
         }
-    }, [connect]);
+    }, [connect, connectionState]);
 
     const disconnect = useCallback(() => {
         stopHeartbeat();
@@ -399,6 +488,7 @@ export function useWebSocket(sessionId: string | null) {
             wsRef.current.close(1000, 'Manual disconnect');
             wsRef.current = null;
         }
+        pendingMessagesRef.current = []; // 清空队列
     }, [stopHeartbeat]);
 
     // 自动连接/断开

@@ -14,7 +14,7 @@ from typing import Any
 import httpx
 
 from app.llm.base import BaseLLMClient
-from app.llm.circuit_breaker import CircuitBreaker
+from app.llm.circuit_breaker import CircuitBreaker, CircuitOpenError
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +78,6 @@ class OpenAICompatibleClient(BaseLLMClient):
         model: str | None = None,
         temperature: float = 0.7,
     ) -> AsyncIterator[str]:
-        # 熔断检查：OPEN 时直接抛 CircuitOpenError
-        self._breaker.check()
-
         # 智能拼接 URL
         base = self._base_url
         if base.rstrip("/").split("/")[-1] in ("v1", "v2", "v3", "v4"):
@@ -94,37 +91,53 @@ class OpenAICompatibleClient(BaseLLMClient):
             "temperature": temperature,
         }
 
-        client = self._get_client()
-        try:
-            async with asyncio.timeout(self._stream_timeout):
-                async with client.stream(
-                    "POST", url, headers=self._headers, json=payload
-                ) as resp:
-                    resp.raise_for_status()
-                    async for line in resp.aiter_lines():
-                        if not line or not line.startswith("data:"):
-                            continue
+        max_retries = 3
+        for attempt in range(max_retries):
+            # 熔断检查：OPEN 时直接抛 CircuitOpenError
+            self._breaker.check()
 
-                        data = line[len("data:"):].strip()
-                        if data == "[DONE]":
-                            break
+            client = self._get_client()
+            yielded_any = False
+            try:
+                async with asyncio.timeout(self._stream_timeout):
+                    async with client.stream(
+                        "POST", url, headers=self._headers, json=payload
+                    ) as resp:
+                        resp.raise_for_status()
+                        async for line in resp.aiter_lines():
+                            if not line or not line.startswith("data:"):
+                                continue
 
-                        try:
-                            chunk = json.loads(data)
-                            delta = chunk["choices"][0]["delta"]
-                            content = delta.get("content")
-                            if content:
-                                yield content
-                        except Exception:
-                            continue
-            # 流式完成 → 记录成功
-            self._breaker.record_success()
-        except Exception as e:
-            self._breaker.record_failure()
-            logger.warning(
-                "LLM stream failed [%s]: %s", self._breaker.name, e,
-            )
-            raise
+                            data = line[len("data:"):].strip()
+                            if data == "[DONE]":
+                                break
+
+                            try:
+                                chunk = json.loads(data)
+                                delta = chunk["choices"][0]["delta"]
+                                content = delta.get("content")
+                                if content:
+                                    yielded_any = True
+                                    yield content
+                            except Exception:
+                                continue
+                # 流式完成 → 记录成功
+                self._breaker.record_success()
+                return
+            except CircuitOpenError:
+                raise
+            except Exception as e:
+                self._breaker.record_failure()
+                if yielded_any:
+                    logger.warning("LLM stream failed mid-stream [%s]: %s", self._breaker.name, e)
+                    raise
+                if attempt == max_retries - 1:
+                    logger.warning("LLM stream failed after %d retries [%s]: %s", max_retries, self._breaker.name, e)
+                    raise
+
+                wait_time = 1.0 * (attempt + 1)
+                logger.info("Retrying LLM API after error [%s] in %.1fs: %s", self._breaker.name, wait_time, e)
+                await asyncio.sleep(wait_time)
 
     async def close(self) -> None:
         """关闭 HTTP 连接池。"""

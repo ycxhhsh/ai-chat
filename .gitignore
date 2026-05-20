@@ -29,3 +29,22 @@ uploads/
 
 # Test artifacts
 artifacts/
+
+# Local debug / deploy artifacts
+*.log
+*.tar.gz
+*.zip
+tmp-cache/
+frontend/tmp-cache/
+frontend/.claude/
+backend/openapi.json
+error*.txt
+backend_*.txt
+cothink_nginx.txt
+remote_backend_logs.txt
+debug*.py
+debug*.json
+debug*.txt
+*_logs.txt
+*_out.txt
+*_out.json

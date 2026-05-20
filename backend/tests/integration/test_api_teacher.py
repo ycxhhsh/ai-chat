@@ -1,12 +1,34 @@
 """教师端 API 集成测试。"""
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from httpx import AsyncClient
 
 
 def _auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
+
+
+async def _register_user(
+    client: AsyncClient,
+    role: str,
+    name: str,
+) -> tuple[str, dict]:
+    suffix = uuid.uuid4().hex[:10]
+    resp = await client.post(
+        "/auth/register",
+        json={
+            "email": f"{role}-{suffix}@test.com",
+            "password": "pass123",
+            "name": name,
+            "role": role,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    return data["access_token"], data["user"]
 
 
 @pytest.mark.asyncio
@@ -86,9 +108,9 @@ class TestTeacherAnalytics:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert "participation_curve" in data
+        assert "participation_trend" in data
         assert "ai_intervention_rate" in data
-        assert "scaffold_heatmap" in data
+        assert "scaffold_usage" in data
 
     async def test_student_cannot_get_analytics(
         self, async_client: AsyncClient, student_token: str,
@@ -161,6 +183,120 @@ class TestAssignments:
         )
         assert resp2.status_code == 200
         assert len(resp2.json()) >= 1
+
+
+@pytest.mark.asyncio
+class TestAssignmentTasks:
+    """作业任务、自评和匿名互评 API"""
+
+    async def test_task_peer_review_flow_with_missing_submitter(
+        self,
+        async_client: AsyncClient,
+    ):
+        teacher_token, _teacher = await _register_user(
+            async_client,
+            "teacher",
+            "任务教师",
+        )
+        students = []
+        for idx in range(7):
+            token, user = await _register_user(
+                async_client,
+                "student",
+                f"任务学生{idx}",
+            )
+            students.append((token, user))
+
+        target_ids = [user["user_id"] for _token, user in students]
+        create_resp = await async_client.post(
+            "/teacher/assignment-tasks",
+            json={
+                "title": "互评测试作业",
+                "description": "请提交测试作业",
+                "target_student_ids": target_ids,
+                "peer_review_count": 5,
+            },
+            headers=_auth(teacher_token),
+        )
+        assert create_resp.status_code == 200
+        task_id = create_resp.json()["task_id"]
+        assert create_resp.json()["target_count"] == 7
+
+        list_resp = await async_client.get(
+            "/assignments/tasks",
+            headers=_auth(students[0][0]),
+        )
+        assert list_resp.status_code == 200
+        assert any(item["task"]["task_id"] == task_id for item in list_resp.json())
+
+        for idx, (token, _user) in enumerate(students[:6]):
+            submit_resp = await async_client.post(
+                f"/assignments/tasks/{task_id}/submit",
+                json={"content": f"第 {idx} 份作业", "file_url": None},
+                headers=_auth(token),
+            )
+            assert submit_resp.status_code == 200
+
+        self_resp = await async_client.post(
+            f"/assignments/tasks/{task_id}/self-review",
+            json={"score": 88, "comment": "我完成得比较充分"},
+            headers=_auth(students[0][0]),
+        )
+        assert self_resp.status_code == 200
+        assert self_resp.json()["self_review"]["score"] == 88
+
+        start_resp = await async_client.post(
+            f"/teacher/assignment-tasks/{task_id}/start-peer-review",
+            headers=_auth(teacher_token),
+        )
+        assert start_resp.status_code == 200
+        assert start_resp.json()["status"] == "peer_review"
+        assert start_resp.json()["peer_review_total"] == 35
+
+        late_submit_resp = await async_client.post(
+            f"/assignments/tasks/{task_id}/submit",
+            json={"content": "迟交内容", "file_url": None},
+            headers=_auth(students[6][0]),
+        )
+        assert late_submit_resp.status_code == 400
+
+        missing_detail_resp = await async_client.get(
+            f"/assignments/tasks/{task_id}",
+            headers=_auth(students[6][0]),
+        )
+        assert missing_detail_resp.status_code == 200
+        missing_detail = missing_detail_resp.json()
+        assert missing_detail["assignment"] is None
+        assert len(missing_detail["peer_reviews"]) == 5
+        assert "reviewee_id" not in missing_detail["peer_reviews"][0]
+        assert "reviewer_id" not in missing_detail["peer_reviews"][0]
+
+        reviewer_detail_resp = await async_client.get(
+            f"/assignments/tasks/{task_id}",
+            headers=_auth(students[0][0]),
+        )
+        review_id = reviewer_detail_resp.json()["peer_reviews"][0]["id"]
+        peer_submit_resp = await async_client.patch(
+            f"/assignments/peer-reviews/{review_id}",
+            json={"score": 92, "comment": "论证清楚"},
+            headers=_auth(students[0][0]),
+        )
+        assert peer_submit_resp.status_code == 200
+        assert peer_submit_resp.json()["status"] == "submitted"
+
+        teacher_detail_resp = await async_client.get(
+            f"/teacher/assignment-tasks/{task_id}",
+            headers=_auth(teacher_token),
+        )
+        assert teacher_detail_resp.status_code == 200
+        teacher_detail = teacher_detail_resp.json()
+        assert teacher_detail["task"]["peer_review_completed"] == 1
+        all_received = [
+            review
+            for target in teacher_detail["targets"]
+            for review in target["peer_reviews_received"]
+        ]
+        assert any(review["reviewer_name"] == "任务学生0" for review in all_received)
 
 
 @pytest.mark.asyncio

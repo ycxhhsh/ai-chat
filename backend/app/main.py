@@ -26,6 +26,9 @@ from app.routers.ai_conversations import router as ai_conversations_router
 from app.routers.upload import router as upload_router
 from app.routers.mindmap import router as mindmap_router
 from app.routers.jobs import router as jobs_router
+from app.routers.learning_space_design import (
+    router as learning_space_design_router,
+)
 from app.websockets.router import router as websocket_router
 
 logger = logging.getLogger(__name__)
@@ -113,6 +116,7 @@ app.include_router(ai_conversations_router)
 app.include_router(upload_router)
 app.include_router(mindmap_router)
 app.include_router(jobs_router)
+app.include_router(learning_space_design_router)
 
 # ── WebSocket ──
 app.include_router(websocket_router)

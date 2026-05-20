@@ -12,8 +12,6 @@ import {
     X,
     ChevronUp,
     ChevronDown,
-    ChevronLeft,
-    ChevronRight,
 } from 'lucide-react';
 
 type ChatTypeFilter = 'all' | 'group' | 'personal';
@@ -50,7 +48,12 @@ export const MessageLog: React.FC<MessageLogProps> = ({
     const groupedThreads = useMemo(() => {
         const groups = new Map<string, Array<Record<string, unknown>>>();
         for (const m of messages) {
-            const key = (m.conversation_id as string) || (m.session_id as string) || 'unknown';
+            const isGroup = m.chat_type === 'group';
+            // Fallback for deleted groups: merge them into a single list
+            const key = isGroup
+                ? (m.group_name ? `group-${m.group_name}` : 'group-deleted')
+                : ((m.conversation_id as string) || (m.session_id as string) || 'unknown');
+
             if (!groups.has(key)) groups.set(key, []);
             groups.get(key)!.push(m);
         }
@@ -61,7 +64,8 @@ export const MessageLog: React.FC<MessageLogProps> = ({
             const first = msgs[0];
             const last = msgs[msgs.length - 1];
             const chatType = first.chat_type as string;
-            const groupName = first.group_name as string;
+            // Provide a fallback name if it's the deleted group thread
+            const groupName = key === 'group-deleted' ? '未找到归属小组 (已解散)' : (first.group_name as string);
             const senders = [...new Set(msgs.map(m => (m.sender as Record<string, string>)?.name).filter(Boolean))];
             return { key, msgs, chatType, groupName, senders, firstTime: first.created_at as string, lastTime: last.created_at as string };
         });
@@ -241,11 +245,19 @@ export const MessageLog: React.FC<MessageLogProps> = ({
                     {groupedThreads.length === 0 && <div className="text-center py-8 text-gray-300 text-sm">暂无消息</div>}
                 </div>
 
-                {totalMessages > 30 && (
-                    <div className="flex items-center justify-center gap-2 mt-4">
-                        <button onClick={() => loadMessages(msgPage - 1)} disabled={msgPage <= 1} className="p-1.5 text-gray-400 hover:text-gray-600 disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button>
-                        <span className="text-xs text-gray-500">第 {msgPage} 页 · 共 {totalMessages} 条</span>
-                        <button onClick={() => loadMessages(msgPage + 1)} disabled={msgPage * 30 >= totalMessages} className="p-1.5 text-gray-400 hover:text-gray-600 disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
+                {totalMessages > messages.length && (
+                    <div className="flex items-center justify-center mt-6 mb-2">
+                        <button
+                            onClick={() => loadMessages(msgPage + 1)}
+                            className="px-6 py-2.5 text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-full transition-colors flex items-center gap-2"
+                        >
+                            <RefreshCw className="w-4 h-4" /> 加载更早的记录（已加载 {messages.length} / 共 {totalMessages} 条）
+                        </button>
+                    </div>
+                )}
+                {totalMessages > 0 && messages.length >= totalMessages && (
+                    <div className="text-center py-6 text-xs text-gray-400">
+                        已加载全部 {totalMessages} 条记录
                     </div>
                 )}
             </div>

@@ -8,6 +8,7 @@ import { useChatStore } from '../../store/useChatStore';
 import { useAiConversationStore } from '../../store/useAiConversationStore';
 import { ChangePasswordModal } from '../Auth/ChangePasswordModal';
 import { api } from '../../api';
+import { copyToClipboard } from '../../utils/clipboard'; // Added this import
 import {
     Users,
     MessageSquare,
@@ -27,7 +28,7 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 
-type ChannelType = 'group' | 'ai' | 'materials' | 'assignment';
+type ChannelType = 'group' | 'ai' | 'materials' | 'assignment' | 'learning_space';
 
 interface Props {
     activeChannel: ChannelType;
@@ -84,9 +85,9 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
     // AI 频道激活时加载对话列表
     useEffect(() => {
         if (activeChannel === 'ai') {
-            fetchConversations().catch(() => { });
+            fetchConversations(currentGroupId || undefined).catch(() => { });
         }
-    }, [activeChannel, fetchConversations]);
+    }, [activeChannel, currentGroupId, fetchConversations]);
 
     const handleCreateGroup = async () => {
         if (!groupName.trim()) return;
@@ -132,7 +133,7 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
 
     const handleNewConversation = async () => {
         try {
-            await createConversation();
+            await createConversation(undefined, currentGroupId || undefined);
             // 只清空 AI 消息，不清空小组消息
             useChatStore.getState().setAiMessages([]);
             useChatStore.getState().resetAiStream();
@@ -185,12 +186,13 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
     };
 
     // ── 邀请码复制（带 ✓ 反馈） ──
-    const handleCopyGroupCode = (e: React.MouseEvent, code: string, groupId: string) => {
+    const handleCopyGroupCode = async (e: React.MouseEvent, code: string, groupId: string) => {
         e.stopPropagation();
-        navigator.clipboard.writeText(code).then(() => {
+        const success = await copyToClipboard(code);
+        if (success) {
             setCopiedGroupId(groupId);
             setTimeout(() => setCopiedGroupId(null), 2000);
-        });
+        }
     };
 
     const channels: { type: ChannelType; icon: React.ElementType; label: string }[] = [
@@ -199,6 +201,11 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
         { type: 'materials', icon: BookOpen, label: '资料' },
         { type: 'assignment', icon: FileText, label: '作业提交' },
     ];
+    channels.splice(3, 0, {
+        type: 'learning_space',
+        icon: BookOpen,
+        label: '学习空间设计',
+    });
 
     return (
         <div className="w-64 h-full bg-white border-r border-gray-200 flex flex-col">

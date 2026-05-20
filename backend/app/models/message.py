@@ -41,6 +41,10 @@ class Message(Base):
     conversation_id: Mapped[Optional[str]] = mapped_column(
         String(36), index=True, nullable=True
     )
+    # The EDIPT stage the group was in when this message was sent
+    edipt_stage: Mapped[Optional[str]] = mapped_column(
+        String, index=True, nullable=True
+    )
     sender: Mapped[dict] = mapped_column(JSONB, nullable=False)
     content: Mapped[str] = mapped_column(String, nullable=False)
     timing: Mapped[dict] = mapped_column(JSONB, nullable=False)

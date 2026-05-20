@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import String, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -21,6 +22,9 @@ class Group(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     invite_code: Mapped[str] = mapped_column(
         String, unique=True, index=True, nullable=False
+    )
+    current_stage: Mapped[Optional[str]] = mapped_column(
+        String, nullable=True, default="Empathy"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

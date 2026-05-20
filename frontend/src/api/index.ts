@@ -4,7 +4,19 @@
  * P0-4: 仅 401 时 logout，其他错误不退出登录。
  */
 import axios from 'axios';
-import type { Assignment, Group, LLMProvider, Scaffold } from '../types';
+import type {
+    Assignment,
+    AssignmentTask,
+    AssignmentTaskDetail,
+    AssignmentTaskListItem,
+    Group,
+    LLMProvider,
+    LearningSpaceQuestion,
+    LearningSpaceSessionPayload,
+    LearningSpaceStudentQuestionItem,
+    Scaffold,
+    TeacherAssignmentTaskDetail,
+} from '../types';
 
 const http = axios.create({
     baseURL: window.location.origin,
@@ -89,12 +101,112 @@ export const api = {
             const res = await http.get(`/groups/${groupId}/members`);
             return res.data as { user_id: string; name: string; role: string }[];
         },
+        pushStage: (groupId: string, stage: string) =>
+            http.post(`/groups/${groupId}/stage`, { stage }).then(r => r.data),
+        pushStageToAll: (stage: string) =>
+            http.post('/groups/stage/all', { stage }).then(r => r.data),
     },
 
     scaffolds: {
         list: async () => {
             const res = await http.get('/scaffolds');
             return res.data as Scaffold[];
+        },
+    },
+
+    learningSpaceDesign: {
+        meta: async () => {
+            const res = await http.get('/learning-space-design/meta');
+            return res.data as { stages: string[]; steps: string[] };
+        },
+        teacherQuestions: async () => {
+            const res = await http.get('/learning-space-design/questions');
+            return res.data as LearningSpaceQuestion[];
+        },
+        createQuestion: async (data: Record<string, unknown>) => {
+            const res = await http.post('/learning-space-design/questions', data);
+            return res.data as LearningSpaceQuestion;
+        },
+        updateQuestion: async (questionId: string, data: Record<string, unknown>) => {
+            const res = await http.put(`/learning-space-design/questions/${questionId}`, data);
+            return res.data as LearningSpaceQuestion;
+        },
+        deleteQuestion: async (questionId: string) => {
+            const res = await http.delete(`/learning-space-design/questions/${questionId}`);
+            return res.data;
+        },
+        progress: async () => {
+            const res = await http.get('/learning-space-design/progress');
+            return res.data as Array<Record<string, unknown>>;
+        },
+        studentQuestions: async () => {
+            const res = await http.get('/learning-space-design/student/questions');
+            return res.data as LearningSpaceStudentQuestionItem[];
+        },
+        startSession: async (questionId: string, groupId?: string | null) => {
+            const res = await http.post(`/learning-space-design/questions/${questionId}/start`, {
+                group_id: groupId || null,
+            });
+            return res.data;
+        },
+        getSession: async (sessionId: string) => {
+            const res = await http.get(`/learning-space-design/sessions/${sessionId}`);
+            return res.data as LearningSpaceSessionPayload;
+        },
+        createEntry: async (sessionId: string, stepKey: string, content: string) => {
+            const res = await http.post(`/learning-space-design/sessions/${sessionId}/entries`, {
+                step_key: stepKey,
+                content,
+            });
+            return res.data;
+        },
+        updateEntry: async (sessionId: string, entryId: string, content: string) => {
+            const res = await http.put(`/learning-space-design/sessions/${sessionId}/entries/${entryId}`, {
+                content,
+            });
+            return res.data;
+        },
+        sendAiMessage: async (sessionId: string, stepKey: string, content: string, llmProvider?: string) => {
+            const res = await http.post(`/learning-space-design/sessions/${sessionId}/ai-message`, {
+                step_key: stepKey,
+                content,
+                llm_provider: llmProvider || 'deepseek',
+            });
+            return res.data;
+        },
+        submitStep: async (sessionId: string, stepKey: string) => {
+            const res = await http.post(`/learning-space-design/sessions/${sessionId}/submit-step`, {
+                step_key: stepKey,
+            });
+            return res.data;
+        },
+        checkAcceleration: async (sessionId: string, stepKey: string, content: string, llmProvider?: string) => {
+            const res = await http.post(`/learning-space-design/sessions/${sessionId}/check-acceleration`, {
+                step_key: stepKey,
+                content,
+                llm_provider: llmProvider || 'deepseek',
+            });
+            return res.data;
+        },
+        adoptAcceleration: async (sessionId: string, checkId: string) => {
+            const res = await http.post(`/learning-space-design/sessions/${sessionId}/adopt-acceleration`, {
+                check_id: checkId,
+            });
+            return res.data;
+        },
+        generateSummary: async (sessionId: string, llmProvider?: string) => {
+            const res = await http.post(`/learning-space-design/sessions/${sessionId}/generate-summary`, {
+                llm_provider: llmProvider || 'deepseek',
+            });
+            return res.data;
+        },
+        report: async (sessionId: string) => {
+            const res = await http.get(`/learning-space-design/sessions/${sessionId}/report`);
+            return res.data;
+        },
+        exportReport: async (sessionId: string) => {
+            const res = await http.get(`/learning-space-design/sessions/${sessionId}/export`);
+            return res.data;
         },
     },
 
@@ -108,6 +220,35 @@ export const api = {
     assignments: {
         submit: async (content: string, fileUrl?: string) => {
             const res = await http.post('/assignments', { content, file_url: fileUrl || null });
+            return res.data;
+        },
+        tasks: async () => {
+            const res = await http.get('/assignments/tasks');
+            return res.data as AssignmentTaskListItem[];
+        },
+        taskDetail: async (taskId: string) => {
+            const res = await http.get(`/assignments/tasks/${taskId}`);
+            return res.data as AssignmentTaskDetail;
+        },
+        submitToTask: async (taskId: string, content: string, fileUrl?: string | null) => {
+            const res = await http.post(`/assignments/tasks/${taskId}/submit`, {
+                content,
+                file_url: fileUrl || null,
+            });
+            return res.data as AssignmentTaskDetail;
+        },
+        submitSelfReview: async (taskId: string, score: number, comment: string | null) => {
+            const res = await http.post(`/assignments/tasks/${taskId}/self-review`, {
+                score,
+                comment,
+            });
+            return res.data;
+        },
+        submitPeerReview: async (reviewId: string, score: number, comment: string | null) => {
+            const res = await http.patch(`/assignments/peer-reviews/${reviewId}`, {
+                score,
+                comment,
+            });
             return res.data;
         },
         mine: async () => {
@@ -196,6 +337,27 @@ export const api = {
         assignments: async () => {
             const res = await http.get('/teacher/assignments');
             return res.data;
+        },
+        assignmentTasks: async () => {
+            const res = await http.get('/teacher/assignment-tasks');
+            return res.data as AssignmentTask[];
+        },
+        createAssignmentTask: async (data: {
+            title: string;
+            description?: string | null;
+            target_student_ids: string[];
+            peer_review_count?: number;
+        }) => {
+            const res = await http.post('/teacher/assignment-tasks', data);
+            return res.data as AssignmentTask;
+        },
+        assignmentTaskDetail: async (taskId: string) => {
+            const res = await http.get(`/teacher/assignment-tasks/${taskId}`);
+            return res.data as TeacherAssignmentTaskDetail;
+        },
+        startAssignmentPeerReview: async (taskId: string) => {
+            const res = await http.post(`/teacher/assignment-tasks/${taskId}/start-peer-review`);
+            return res.data as AssignmentTask;
         },
         aiConversations: async (params: Record<string, unknown> = {}) => {
             const res = await http.get('/teacher/ai-conversations', { params });

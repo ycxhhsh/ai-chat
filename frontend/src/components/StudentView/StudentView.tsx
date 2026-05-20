@@ -1,7 +1,7 @@
 /**
  * 学生端主视图 — 三栏布局：侧边栏 + 聊天区 + 思维导图。
  */
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useGroupStore } from '../../store/useGroupStore';
 import { useChatStore } from '../../store/useChatStore';
@@ -15,11 +15,13 @@ import { ChatInterface } from '../Chat/ChatInterface';
 import { MindMapPanel } from '../MindMap/MindMapPanel';
 import { AssignmentPanel } from './AssignmentPanel';
 import { MaterialsPanel } from './MaterialsPanel';
+import { LearningSpaceDesignPanel } from './LearningSpaceDesignPanel';
 import { generateUUID } from '../../utils/uuid';
 import { PanelRight, PanelRightClose, Menu, MessageSquare as ChatIcon, GitBranch, Search } from 'lucide-react';
 import type { ChatMessage } from '../../types';
 import { NotificationBell } from '../NotificationBell';
 import { DeepSearchDialog } from '../Chat/DeepSearchDialog';
+import { DrawingPromptDialog } from './DrawingPromptDialog';
 
 /** 响应式断点 hook */
 function useIsDesktop() {
@@ -35,7 +37,7 @@ function useIsDesktop() {
     return isDesktop;
 }
 
-type ChannelType = 'group' | 'ai' | 'materials' | 'assignment';
+type ChannelType = 'group' | 'ai' | 'materials' | 'assignment' | 'learning_space';
 
 export const StudentView: React.FC = () => {
     const [activeChannel, setActiveChannel] = useState<ChannelType>('ai');
@@ -46,8 +48,25 @@ export const StudentView: React.FC = () => {
     const isDesktop = useIsDesktop();
     const { setInputMessage } = useScaffoldStore();
 
+    const [isDrawingDialogOpen, setIsDrawingDialogOpen] = useState(false);
+    const [isDrawingPromptLoading, setIsDrawingPromptLoading] = useState(false);
+    const [drawingPrompt, setDrawingPrompt] = useState('');
+    const lastClickTimeRef = useRef<number>(0);
+
     const { user } = useAuthStore();
-    const { currentGroupId } = useGroupStore();
+    const { groups, currentGroupId } = useGroupStore();
+    const currentGroup = groups.find(g => g.id === currentGroupId);
+
+    // Initial stage from group data
+    const [currentStage, setCurrentStage] = useState<string>(currentGroup?.current_stage || '');
+
+    // Sync from store if currentGroup changes, and allow WS to override it
+    useEffect(() => {
+        if (currentGroup?.current_stage) {
+            setCurrentStage(currentGroup.current_stage);
+        }
+    }, [currentGroup?.current_stage]);
+
     const {
         groupMessagesBySession,
         aiMessages,
@@ -73,6 +92,22 @@ export const StudentView: React.FC = () => {
         : activeChannel === 'ai' && currentConversationId
             ? `conv:${currentConversationId}`
             : null;
+
+    // 监听 EDIPT 阶段广播
+    useEffect(() => {
+        const handler = (e: Event) => setCurrentStage((e as CustomEvent<string>).detail);
+        window.addEventListener('edipt-stage-update', handler);
+        return () => window.removeEventListener('edipt-stage-update', handler);
+    }, []);
+
+    useEffect(() => {
+        const promptHandler = (e: Event) => {
+            setDrawingPrompt((e as CustomEvent<string>).detail);
+            setIsDrawingPromptLoading(false);
+        };
+        window.addEventListener('drawing-prompt-ready', promptHandler);
+        return () => window.removeEventListener('drawing-prompt-ready', promptHandler);
+    }, []);
 
     // 定期轮询支架状态（15s），确保教师端开闭同步到学生端
     useEffect(() => {
@@ -195,6 +230,31 @@ export const StudentView: React.FC = () => {
         send('MINDMAP_GENERATE', { map_key: mapKey || '' });
     }, [send, mapKey]);
 
+    // 发起设计草图请求
+    const handleRequestDrawing = useCallback((customPrompt?: string | React.MouseEvent | undefined) => {
+        const targetSessionId = activeChannel === 'ai' ? currentConversationId : currentGroupId;
+        if (!targetSessionId) return;
+
+        if (typeof customPrompt === 'string') {
+           send('DESIGN_DRAWING', { api_provider: 'aliyun', custom_prompt: customPrompt, session_id: targetSessionId });
+           setIsDrawingDialogOpen(false);
+           return;
+        }
+
+        const now = Date.now();
+        if (now - lastClickTimeRef.current < 5000) {
+            console.log("Debounced drawing request");
+            return;
+        }
+        lastClickTimeRef.current = now;
+
+        setIsDrawingDialogOpen(true);
+        setIsDrawingPromptLoading(true);
+        setDrawingPrompt('');
+
+        send('PREPARE_DRAWING', { llm_provider: 'deepseek', session_id: targetSessionId });
+    }, [send, currentGroupId, activeChannel, currentConversationId]);
+
     // 思维导图编辑同步
     const handleMindMapEditSync = useCallback(
         (operation: string, payload: Record<string, unknown>) => {
@@ -216,6 +276,7 @@ export const StudentView: React.FC = () => {
         ai: 'AI 苏格拉底导师（1v1）',
         materials: '所有课程资料',
         assignment: '作业提交',
+        learning_space: '学习空间设计',
     };
 
     return (
@@ -276,7 +337,7 @@ export const StudentView: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-2">
                         {/* 移动端聊天/导图切换（仅非作业/资料页面） */}
-                        {activeChannel !== 'assignment' && activeChannel !== 'materials' && (
+                        {activeChannel !== 'assignment' && activeChannel !== 'materials' && activeChannel !== 'learning_space' && (
                             <div className="flex md:hidden bg-gray-100 rounded-lg p-0.5">
                                 <button
                                     onClick={() => setMobilePanel('chat')}
@@ -299,7 +360,7 @@ export const StudentView: React.FC = () => {
                             </div>
                         )}
                         {/* 桌面端导图切换 */}
-                        {activeChannel !== 'assignment' && activeChannel !== 'materials' && (
+                        {activeChannel !== 'assignment' && activeChannel !== 'materials' && activeChannel !== 'learning_space' && (
                             <button
                                 onClick={() => setShowMindMap(!showMindMap)}
                                 className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-500 hover:text-primary hover:bg-primary-light rounded-lg transition-colors"
@@ -331,7 +392,7 @@ export const StudentView: React.FC = () => {
                         {/* 聊天区 */}
                         <div
                             className="absolute top-3 bottom-3 transition-all duration-500 ease-in-out"
-                            style={activeChannel === 'assignment' ? {
+                            style={activeChannel === 'assignment' || activeChannel === 'learning_space' ? {
                                 left: '12px', right: '12px',
                             } : {
                                 width: '48%',
@@ -340,6 +401,8 @@ export const StudentView: React.FC = () => {
                         >
                             {activeChannel === 'assignment' ? (
                                 <AssignmentPanel />
+                            ) : activeChannel === 'learning_space' ? (
+                                <LearningSpaceDesignPanel />
                             ) : activeChannel === 'materials' ? (
                                 <MaterialsPanel />
                             ) : (
@@ -350,11 +413,13 @@ export const StudentView: React.FC = () => {
                                     showScaffolds={true}
                                     isAiChannel={activeChannel === 'ai'}
                                     disabled={activeChannel === 'group' && !currentGroupId}
+                                    currentStage={activeChannel === 'group' ? currentStage : undefined}
+                                    onRequestDrawing={handleRequestDrawing}
                                 />
                             )}
                         </div>
                         {/* 思维导图区 — 从右侧滑入 */}
-                        {activeChannel !== 'assignment' && activeChannel !== 'materials' && (
+                        {activeChannel !== 'assignment' && activeChannel !== 'materials' && activeChannel !== 'learning_space' && (
                             <div
                                 className="absolute top-3 bottom-3 transition-all duration-500 ease-in-out"
                                 style={{
@@ -381,12 +446,14 @@ export const StudentView: React.FC = () => {
                     <div className="flex-1 flex flex-col overflow-hidden p-2">
                         {/* 聊天区 — 选中时占满 */}
                         <div className={`min-h-0 ${
-                            activeChannel === 'assignment' || activeChannel === 'materials'
+                            activeChannel === 'assignment' || activeChannel === 'materials' || activeChannel === 'learning_space'
                                 ? 'flex-1'
                                 : mobilePanel === 'chat' ? 'flex-1' : 'hidden'
                         }`}>
                             {activeChannel === 'assignment' ? (
                                 <AssignmentPanel />
+                            ) : activeChannel === 'learning_space' ? (
+                                <LearningSpaceDesignPanel />
                             ) : activeChannel === 'materials' ? (
                                 <MaterialsPanel />
                             ) : (
@@ -397,11 +464,13 @@ export const StudentView: React.FC = () => {
                                     showScaffolds={true}
                                     isAiChannel={activeChannel === 'ai'}
                                     disabled={activeChannel === 'group' && !currentGroupId}
+                                    currentStage={activeChannel === 'group' ? currentStage : undefined}
+                                    onRequestDrawing={handleRequestDrawing}
                                 />
                             )}
                         </div>
                         {/* 思维导图区 — 选中时占满 */}
-                        {activeChannel !== 'assignment' && activeChannel !== 'materials' && (
+                        {activeChannel !== 'assignment' && activeChannel !== 'materials' && activeChannel !== 'learning_space' && (
                             <div className={`min-h-0 ${mobilePanel === 'mindmap' ? 'flex-1' : 'hidden'}`}>
                                 <MindMapPanel
                                     onGenerate={handleGenerateMindMap}
@@ -425,6 +494,15 @@ export const StudentView: React.FC = () => {
                 open={deepSearchOpen}
                 onClose={() => setDeepSearchOpen(false)}
                 sessionId={sessionId || undefined}
+            />
+
+            {/* AI 绘图预设确认弹窗 */}
+            <DrawingPromptDialog
+                isOpen={isDrawingDialogOpen}
+                isLoading={isDrawingPromptLoading}
+                initialPrompt={drawingPrompt}
+                onConfirm={handleRequestDrawing}
+                onCancel={() => setIsDrawingDialogOpen(false)}
             />
         </div>
     );

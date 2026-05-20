@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, ExternalLink, Download } from 'lucide-react';
+import mammoth from 'mammoth';
 
 interface Props {
     title: string;
@@ -11,8 +12,33 @@ export const DocumentPreviewModal: React.FC<Props> = ({ title, fileUrl, onClose 
     // 基础后缀判断
     const ext = title.split('.').pop()?.toLowerCase() || '';
     const isPdfOrTxt = ['pdf', 'txt'].includes(ext);
+    const isOfficeDoc = ['doc', 'ppt', 'pptx', 'xls', 'xlsx'].includes(ext);
 
-    // 对于不支持 iframe 的（比如 docx），直接显示下载提示
+    // Mammoth DOCX state
+    const [docxHtml, setDocxHtml] = useState<string>('');
+    const [docxLoading, setDocxLoading] = useState<boolean>(false);
+
+    useEffect(() => {
+        if (ext === 'docx') {
+            setDocxLoading(true);
+            fetch(fileUrl)
+                .then(res => res.arrayBuffer())
+                .then(buffer => mammoth.convertToHtml({ arrayBuffer: buffer }))
+                .then(result => setDocxHtml(result.value))
+                .catch(err => setDocxHtml(`<div class="text-red-500">解析文档失败: ${err.message}</div>`))
+                .finally(() => setDocxLoading(false));
+        }
+    }, [fileUrl, ext]);
+
+    // 确保 URL 为绝对路径以便 Office Web Viewer 读取
+    const absoluteFileUrl = fileUrl.startsWith('http')
+        ? fileUrl
+        : `${window.location.protocol}//${window.location.host}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
+
+    // 生成 Office Viewer 链接
+    const officeViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(absoluteFileUrl)}`;
+
+    // 对于不支持 iframe 的，直接显示下载提示
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div className="bg-white rounded-2xl w-full max-w-4xl h-[85vh] flex flex-col shadow-xl overflow-hidden animate-in zoom-in-95 duration-200">
@@ -63,6 +89,26 @@ export const DocumentPreviewModal: React.FC<Props> = ({ title, fileUrl, onClose 
                             className="w-full h-full bg-white rounded-lg shadow-sm border border-gray-200"
                             title={title}
                         />
+                    ) : ext === 'docx' ? (
+                        <div className="w-full h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-auto p-4 md:p-8">
+                            {docxLoading ? (
+                                <div className="flex items-center justify-center h-full text-gray-500 space-x-2">
+                                    <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                                    <span>正在加载文档...</span>
+                                </div>
+                            ) : (
+                                <div
+                                    className="prose prose-blue max-w-none prose-img:rounded-md"
+                                    dangerouslySetInnerHTML={{ __html: docxHtml }}
+                                />
+                            )}
+                        </div>
+                    ) : isOfficeDoc ? (
+                        <iframe
+                            src={officeViewerUrl}
+                            className="w-full h-full bg-white rounded-lg shadow-sm border border-gray-200"
+                            title={title}
+                        />
                     ) : (
                         <div className="flex flex-col items-center justify-center text-center max-w-md">
                             <div className="w-16 h-16 bg-blue-50 text-blue-500 rounded-2xl flex items-center justify-center mb-4">
@@ -72,7 +118,7 @@ export const DocumentPreviewModal: React.FC<Props> = ({ title, fileUrl, onClose 
                                 浏览器不支持预览该格式
                             </h4>
                             <p className="text-sm text-gray-500 mb-6 leading-relaxed">
-                                {title} 属于不支持直接在线渲染的格式（如 docx 等）。请点击下方按钮下载并在本地设备查看。
+                                {title} 属于不支持直接在线渲染的格式。请点击下方按钮下载并在本地设备查看。
                             </p>
                             <a
                                 href={fileUrl}

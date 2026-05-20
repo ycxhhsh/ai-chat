@@ -8,6 +8,8 @@ from typing import AsyncIterator
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -18,6 +20,11 @@ from sqlalchemy.ext.asyncio import (
 os.environ["DB_URL"] = "sqlite+aiosqlite://"
 os.environ["REDIS_URL"] = ""
 os.environ["DEEPSEEK_API_KEY"] = "test-key-not-real"
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_sqlite(_type, _compiler, **_kw):  # noqa: ANN001, ANN202
+    return "JSON"
 
 from app.core.config import get_settings  # noqa: E402
 from app.core.dependencies import get_db  # noqa: E402

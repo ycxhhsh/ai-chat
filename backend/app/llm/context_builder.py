@@ -54,6 +54,7 @@ async def build_sandwich_context(
     max_history: int = 50,
     user_id: str | None = None,
     conversation_id: str | None = None,
+    current_stage: str = "Empathy",
 ) -> list[dict[str, str]]:
     """组装三明治上下文。
 
@@ -78,6 +79,17 @@ async def build_sandwich_context(
 
     # 1a. System Prompt
     full_system = system_prompt
+    if "{current_stage}" in full_system:
+        full_system = full_system.format(current_stage=current_stage)
+
+    # 1a-appendix. 基于当前阶段的策略微调
+    try:
+        from app.llm.prompts import STAGE_INSTRUCTIONS
+        stage_instruction = STAGE_INSTRUCTIONS.get(current_stage)
+        if stage_instruction:
+            full_system += f"\n\n{stage_instruction}\n"
+    except ImportError:
+        pass
 
     # 1b. 支架引导
     if scaffold_prompt:
@@ -188,44 +200,29 @@ async def build_sandwich_context(
         session_id, limit=max_history, conversation_id=conversation_id,
     )
 
-    # ── P1: 长对话自动压缩（>20 条时压缩前半部分为摘要） ──
-    COMPRESS_THRESHOLD = 20
-    if len(history) > COMPRESS_THRESHOLD:
-        half = len(history) // 2
-        old_msgs = history[:half]
-        history = history[half:]  # 保留较新的一半
-
-        compress_lines = []
-        for m in old_msgs:
-            sender = m.sender if isinstance(m.sender, dict) else {}
-            role_tag = (
-                "AI" if sender.get("role") == "ai"
-                else sender.get("name", "学生")
-            )
-            compress_lines.append(f"[{role_tag}] {m.content[:100]}")
-        compress_text = "\n".join(compress_lines)
-
+    # ── P1: 异步长对话压缩支持 ──
+    working_memory = None
+    if conversation_id:
         try:
-            from app.llm.factory import get_llm_client as _get_compress_client
-            _c = _get_compress_client("deepseek")
-            _summary = await _c.chat(
-                messages=[{
-                    "role": "user",
-                    "content": f"用2-3句话总结以下对话要点：\n{compress_text}",
-                }],
-                max_tokens=150,
-            )
-            messages.append({
-                "role": "system",
-                "content": f"[早期对话摘要] {_summary.strip()}",
-            })
-            pinned_tokens = estimate_messages_tokens(messages)
-            logger.info(
-                "Long conversation compressed: %d msgs → summary (%d chars)",
-                len(old_msgs), len(_summary),
-            )
+            from app.db.session import AsyncSessionLocal
+            from app.models.ai_conversation import AiConversation
+            from sqlalchemy import select
+            async with AsyncSessionLocal() as db:
+                res = await db.execute(
+                    select(AiConversation.working_memory)
+                    .where(AiConversation.conversation_id == conversation_id)
+                )
+                working_memory = res.scalar_one_or_none()
         except Exception as e:
-            logger.warning("Long conversation compression failed: %s", e)
+            logger.warning("Failed to load working memory: %s", e)
+
+    if working_memory:
+        messages.append({
+            "role": "system",
+            "content": f"[当前对话进度与足迹总结]\n{working_memory}",
+        })
+        pinned_tokens = estimate_messages_tokens(messages)
+        logger.info("Context injected with working memory for %s", conversation_id)
 
     # 从最新往最旧装填，超预算就停止
     history_messages: list[dict[str, str]] = []

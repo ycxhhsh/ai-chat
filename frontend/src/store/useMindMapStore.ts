@@ -214,12 +214,10 @@ export const useMindMapStore = create<MindMapState>()((set, get) => ({
         })),
 
     /** 设置 AI 草稿（半透明预览，不写入 Yjs）。
-     *  清空先前已接受的节点/边，避免多次生成后残留旧数据。
+     *  保留现有节点，追加显示草稿预览。
      */
     setDraft: (nodes, edges) =>
         set({
-            nodes: [],
-            edges: [],
             draftNodes: nodes.map(toDraftFlowNode),
             draftEdges: edges.map(toDraftFlowEdge),
             draftRawNodes: nodes,
