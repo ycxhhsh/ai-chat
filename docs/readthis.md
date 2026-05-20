@@ -190,6 +190,15 @@ cmd /c npm run build                                                         PAS
 
 前端 build 关键产物：入口 `index` JS 约 56.6 kB，`react-vendor` 约 230.7 kB，`flow` 约 178.7 kB，`charts` 约 385.6 kB，`doc-preview` 约 404.5 kB；当前无 circular chunk warning，无 500 kB 以上 chunk warning。
 
+服务器部署状态：
+
+- GitHub `origin/test` 已更新到 `8e4ebf2`。
+- 后端按低影响流程发布：先标记 rollback 镜像、解包 backend、构建新镜像，最后重启 `backend ai-worker grading-worker`。
+- 前端按无白屏流程发布：先上传并解压新 `assets`，保留旧 hash 资源，最后备份并替换 `index.html`。
+- 线上验收：`GET /healthz` 返回 `200`，首页返回 `200`，`/assets/index-DhLa-_fT.js` 返回 `200`，`/learning-space-design/meta` 返回 `200`。
+- 容器状态：`backend`、`ai-worker`、`grading-worker`、`postgres`、`redis`、`y-websocket` 均为 running；最近后端/worker 日志无启动异常。
+- 本轮补丁还修复了 `grading-worker` 空队列时把 Redis `BRPOP` idle timeout 误打成 ERROR 的问题，改为独立阻塞 Redis 连接。
+
 ---
 
 ## 6. 当前已知风险 / 待办
