@@ -119,40 +119,45 @@ async def _save_grading_result(
 
 async def grading_worker_loop() -> None:
     """评分 Worker 主循环 — BRPOP 消费评分任务。"""
-    from app.infra.redis_client import get_redis
+    import redis.asyncio as aioredis
+    from app.core.config import get_settings
 
     logger.info("Grading worker started, listening on %s", GRADING_QUEUE)
+    settings = get_settings()
+    redis = aioredis.from_url(
+        settings.redis_url,
+        decode_responses=True,
+        socket_connect_timeout=5,
+    )
 
-    while True:
-        try:
-            redis = get_redis()
-            if not redis:
-                await asyncio.sleep(5)
-                continue
+    try:
+        while True:
+            try:
+                # Blocking reads need a dedicated connection without socket_timeout.
+                result = await redis.brpop(GRADING_QUEUE, timeout=30)
+                if not result:
+                    continue
 
-            # 阻塞等待任务（超时 30 秒）
-            result = await redis.brpop(GRADING_QUEUE, timeout=30)
-            if not result:
-                continue
-
-            _, task_raw = result
-            task = json.loads(task_raw)
-            logger.info(
-                "Processing grading task: submission=%s",
-                task.get("submission_id"),
-            )
-
-            # 调用 LLM 评分
-            grading_result = await _grade_submission(task)
-            if grading_result:
-                await _save_grading_result(
-                    task["submission_id"],
-                    grading_result,
+                _, task_raw = result
+                task = json.loads(task_raw)
+                logger.info(
+                    "Processing grading task: submission=%s",
+                    task.get("submission_id"),
                 )
 
-        except Exception as e:
-            logger.error("Grading worker error: %s", e)
-            await asyncio.sleep(5)
+                # 调用 LLM 评分
+                grading_result = await _grade_submission(task)
+                if grading_result:
+                    await _save_grading_result(
+                        task["submission_id"],
+                        grading_result,
+                    )
+
+            except Exception as e:
+                logger.error("Grading worker error: %s", e)
+                await asyncio.sleep(5)
+    finally:
+        await redis.close()
 
 
 if __name__ == "__main__":
