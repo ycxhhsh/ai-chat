@@ -41,7 +41,7 @@ async def handle_mindmap_generate(
 
     map_key = data.get("map_key") or f"session:{session_id}"
 
-    asyncio.create_task(
+    manager.track_task(
         _generate_mindmap(session_id, user_info, manager, map_key=map_key)
     )
 
@@ -581,7 +581,7 @@ async def handle_mindmap_edit(
     )
 
     # 异步更新数据库
-    asyncio.create_task(
+    manager.track_task(
         _update_mindmap_db(map_key, operation, payload)
     )
 

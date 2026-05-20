@@ -10,15 +10,19 @@
 """
 from __future__ import annotations
 
+from sqlalchemy import String, cast, func
+
 
 def jq(column, *keys):
-    """从 JSONB 列提取文本值（PostgreSQL ->> 操作符）。
-
-    中间 key 用 -> 返回 JSON 对象，最后一个 key 用 ->> 返回文本。
-    """
+    """Extract nested JSON keys as text across PostgreSQL and SQLite."""
     if not keys:
         raise ValueError("jq() requires at least one key")
-    col = column
-    for key in keys[:-1]:
-        col = col.op("->")(key)
-    return col.op("->>")(keys[-1])
+    expr = column
+    for key in keys:
+        expr = expr[key]
+    return expr.as_string()
+
+
+def jq_truthy(column, *keys):
+    """Match JSON booleans stored as true/1 or as string values."""
+    return func.lower(cast(jq(column, *keys), String)).in_(("true", "1"))

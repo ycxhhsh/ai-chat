@@ -1,7 +1,6 @@
 """Jobs & Notifications API 路由 — DeepSearch + 站内通知。"""
 from __future__ import annotations
 
-import asyncio
 import uuid
 import logging
 
@@ -12,6 +11,7 @@ import csv
 import io
 
 from app.core.dependencies import get_db, get_current_user
+from app.infra.background_tasks import track_task
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ async def create_job(
                 llm_provider=req.llm_provider,
             )
 
-        asyncio.create_task(_run_in_background())
+        track_task(_run_in_background(), name=f"job:{job_id}")
 
     return _job_to_response(job)
 

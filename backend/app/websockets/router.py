@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from contextlib import suppress
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
@@ -231,6 +232,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         logger.warning("WS error for user=%s: %s", user_id, e)
     finally:
         heartbeat_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat_task
         manager.disconnect(websocket)
         # 安全广播离开事件
         try:

@@ -1,7 +1,6 @@
 """Chat WS 事件处理。"""
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -118,7 +117,7 @@ async def handle_chat_send(
         await manager.broadcast(session_id, "CHAT_MESSAGE", message)
 
     # 异步落库 + ACK
-    asyncio.create_task(
+    manager.track_task(
         _save_message_and_ack(
             message, request_id=request_id,
             websocket=websocket, session_id=session_id,
@@ -128,7 +127,7 @@ async def handle_chat_send(
 
     # P1-7: 小组消息异步谬误检测（AI 私聊不检测）
     if target_user != "ai" and len(content) >= 20:
-        asyncio.create_task(
+        manager.track_task(
             _run_fallacy_detection(
                 session_id, user_info, content, manager, llm_provider,
             )
@@ -170,7 +169,7 @@ async def handle_chat_send(
                 scaffold_info["id"]
             )
 
-        asyncio.create_task(
+        manager.track_task(
             _trigger_ai_reply_with_stage(
                 session_id=session_id,
                 user_message=content,
@@ -465,9 +464,7 @@ async def handle_stage_update(
     )
 
     # 异步落库组进度
-    asyncio.create_task(
-        _save_group_stage(session_id, new_stage)
-    )
+    manager.track_task(_save_group_stage(session_id, new_stage))
 
 async def _save_group_stage(group_id: str, stage: str) -> None:
     """保存进度到数据库。"""
@@ -576,5 +573,3 @@ async def handle_prepare_drawing(
     except Exception as e:
         logger.exception("Failed to prepare drawing prompt: %s", e)
         await manager.send_error(websocket, f"Failed to prepare drawing: {e}", code="DRAWING_PREPARE_ERROR")
-
-

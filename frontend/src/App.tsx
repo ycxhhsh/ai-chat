@@ -1,13 +1,22 @@
 /**
  * App 根组件 — React Router v6 路由配置。
  */
-import { useEffect } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './store/useAuthStore';
-import { LoginPage } from './components/Auth/LoginPage';
 import { ProtectedRoute } from './components/Auth/ProtectedRoute';
-import { StudentView } from './components/StudentView/StudentView';
-import { TeacherDashboard } from './components/TeacherView/TeacherDashboard';
+
+const LoginPage = lazy(() => import('./components/Auth/LoginPage').then(mod => ({ default: mod.LoginPage })));
+const StudentView = lazy(() => import('./components/StudentView/StudentView').then(mod => ({ default: mod.StudentView })));
+const TeacherDashboard = lazy(() => import('./components/TeacherView/TeacherDashboard').then(mod => ({ default: mod.TeacherDashboard })));
+
+function PageFallback() {
+    return (
+        <div className="h-screen flex items-center justify-center bg-gray-50 text-sm text-gray-400">
+            加载中...
+        </div>
+    );
+}
 
 /** 检查 JWT 是否已过期 */
 function isTokenExpired(token: string): boolean {
@@ -31,47 +40,49 @@ function AppRoutes() {
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     return (
-        <Routes>
-            {/* 登录页 */}
-            <Route
-                path="/login"
-                element={
-                    isAuthenticated
-                        ? <Navigate to={user?.role === 'teacher' ? '/teacher' : '/student'} replace />
-                        : <LoginPage />
-                }
-            />
+        <Suspense fallback={<PageFallback />}>
+            <Routes>
+                {/* 登录页 */}
+                <Route
+                    path="/login"
+                    element={
+                        isAuthenticated
+                            ? <Navigate to={user?.role === 'teacher' ? '/teacher' : '/student'} replace />
+                            : <LoginPage />
+                    }
+                />
 
-            {/* 学生端 */}
-            <Route
-                path="/student/*"
-                element={
-                    <ProtectedRoute requiredRole="student">
-                        <StudentView />
-                    </ProtectedRoute>
-                }
-            />
+                {/* 学生端 */}
+                <Route
+                    path="/student/*"
+                    element={
+                        <ProtectedRoute requiredRole="student">
+                            <StudentView />
+                        </ProtectedRoute>
+                    }
+                />
 
-            {/* 教师端 */}
-            <Route
-                path="/teacher/*"
-                element={
-                    <ProtectedRoute requiredRole="teacher">
-                        <TeacherDashboard />
-                    </ProtectedRoute>
-                }
-            />
+                {/* 教师端 */}
+                <Route
+                    path="/teacher/*"
+                    element={
+                        <ProtectedRoute requiredRole="teacher">
+                            <TeacherDashboard />
+                        </ProtectedRoute>
+                    }
+                />
 
-            {/* 根路径：按角色重定向 */}
-            <Route
-                path="*"
-                element={
-                    isAuthenticated
-                        ? <Navigate to={user?.role === 'teacher' ? '/teacher' : '/student'} replace />
-                        : <Navigate to="/login" replace />
-                }
-            />
-        </Routes>
+                {/* 根路径：按角色重定向 */}
+                <Route
+                    path="*"
+                    element={
+                        isAuthenticated
+                            ? <Navigate to={user?.role === 'teacher' ? '/teacher' : '/student'} replace />
+                            : <Navigate to="/login" replace />
+                    }
+                />
+            </Routes>
+        </Suspense>
     );
 }
 

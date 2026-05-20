@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from httpx import AsyncClient
+
+from app.models.message import Message
 
 
 def _auth(token: str) -> dict:
@@ -101,8 +104,41 @@ class TestTeacherAnalytics:
     """GET /teacher/analytics"""
 
     async def test_analytics(
-        self, async_client: AsyncClient, teacher_token: str,
+        self, async_client: AsyncClient, teacher_token: str, db_session,
     ):
+        now = datetime.now(timezone.utc)
+        db_session.add_all([
+            Message(
+                message_id=f"analytics-student-{uuid.uuid4()}",
+                session_id="analytics-group",
+                sender={
+                    "id": "analytics-student",
+                    "name": "分析学生",
+                    "role": "student",
+                },
+                content="我认为这个学习空间需要兼顾协作讨论和独立思考。",
+                timing={"absolute_time": now.isoformat(), "relative_minute": 0},
+                metadata_info={
+                    "is_scaffold_used": True,
+                    "scaffold_info": {"name": "证据支架"},
+                    "is_mindmap_extraction": True,
+                    "mindmap_node_count": 4,
+                },
+                created_at=now,
+            ),
+            Message(
+                message_id=f"analytics-ai-{uuid.uuid4()}",
+                session_id="analytics-group",
+                recipient_id="analytics-student",
+                sender={"id": "ai", "name": "AI", "role": "ai"},
+                content="你可以进一步说明协作区和独立区的边界条件。",
+                timing={"absolute_time": now.isoformat(), "relative_minute": 1},
+                metadata_info={},
+                created_at=now,
+            ),
+        ])
+        await db_session.commit()
+
         resp = await async_client.get(
             "/teacher/analytics", headers=_auth(teacher_token),
         )
@@ -111,6 +147,10 @@ class TestTeacherAnalytics:
         assert "participation_trend" in data
         assert "ai_intervention_rate" in data
         assert "scaffold_usage" in data
+        assert data["scaffold_usage"][0]["scaffold_name"] == "证据支架"
+        assert data["ai_intervention_rate"][0]["student_name"] == "分析学生"
+        assert data["discussion_depth"][0]["name"] == "分析学生"
+        assert data["participation_heatmap"][0]["student_name"] == "分析学生"
 
     async def test_student_cannot_get_analytics(
         self, async_client: AsyncClient, student_token: str,

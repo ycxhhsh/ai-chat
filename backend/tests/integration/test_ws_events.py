@@ -35,6 +35,7 @@ class FakeManager:
         self.broadcasts: list[tuple] = []
         self.sent_to_user: list[tuple] = []
         self.errors: list[str] = []
+        self.tasks: list[asyncio.Task] = []
 
     def get_user_info(self, ws):
         return self._user_info
@@ -47,6 +48,11 @@ class FakeManager:
 
     async def send_error(self, ws, message):
         self.errors.append(message)
+
+    def track_task(self, coro, *, name=None):
+        task = asyncio.create_task(coro, name=name)
+        self.tasks.append(task)
+        return task
 
 
 @pytest.mark.asyncio

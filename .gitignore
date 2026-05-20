@@ -29,6 +29,7 @@ uploads/
 
 # Test artifacts
 artifacts/
+backend/.pytest_*.sqlite3
 
 # Local debug / deploy artifacts
 *.log

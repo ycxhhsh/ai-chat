@@ -12,16 +12,23 @@ import { useWebSocket } from '../../hooks/useWebSocket';
 import { api } from '../../api';
 import { Sidebar } from './Sidebar';
 import { ChatInterface } from '../Chat/ChatInterface';
-import { MindMapPanel } from '../MindMap/MindMapPanel';
-import { AssignmentPanel } from './AssignmentPanel';
-import { MaterialsPanel } from './MaterialsPanel';
-import { LearningSpaceDesignPanel } from './LearningSpaceDesignPanel';
 import { generateUUID } from '../../utils/uuid';
 import { PanelRight, PanelRightClose, Menu, MessageSquare as ChatIcon, GitBranch, Search } from 'lucide-react';
 import type { ChatMessage } from '../../types';
 import { NotificationBell } from '../NotificationBell';
-import { DeepSearchDialog } from '../Chat/DeepSearchDialog';
-import { DrawingPromptDialog } from './DrawingPromptDialog';
+
+const MindMapPanel = React.lazy(() => import('../MindMap/MindMapPanel').then(mod => ({ default: mod.MindMapPanel })));
+const AssignmentPanel = React.lazy(() => import('./AssignmentPanel').then(mod => ({ default: mod.AssignmentPanel })));
+const MaterialsPanel = React.lazy(() => import('./MaterialsPanel').then(mod => ({ default: mod.MaterialsPanel })));
+const LearningSpaceDesignPanel = React.lazy(() => import('./LearningSpaceDesignPanel').then(mod => ({ default: mod.LearningSpaceDesignPanel })));
+const DeepSearchDialog = React.lazy(() => import('../Chat/DeepSearchDialog').then(mod => ({ default: mod.DeepSearchDialog })));
+const DrawingPromptDialog = React.lazy(() => import('./DrawingPromptDialog').then(mod => ({ default: mod.DrawingPromptDialog })));
+
+const PanelFallback: React.FC = () => (
+    <div className="h-full flex items-center justify-center text-sm text-gray-400">
+        加载中...
+    </div>
+);
 
 /** 响应式断点 hook */
 function useIsDesktop() {
@@ -400,11 +407,17 @@ export const StudentView: React.FC = () => {
                             }}
                         >
                             {activeChannel === 'assignment' ? (
-                                <AssignmentPanel />
+                                <React.Suspense fallback={<PanelFallback />}>
+                                    <AssignmentPanel />
+                                </React.Suspense>
                             ) : activeChannel === 'learning_space' ? (
-                                <LearningSpaceDesignPanel />
+                                <React.Suspense fallback={<PanelFallback />}>
+                                    <LearningSpaceDesignPanel />
+                                </React.Suspense>
                             ) : activeChannel === 'materials' ? (
-                                <MaterialsPanel />
+                                <React.Suspense fallback={<PanelFallback />}>
+                                    <MaterialsPanel />
+                                </React.Suspense>
                             ) : (
                                 <ChatInterface
                                     messages={currentMessages}
@@ -428,16 +441,18 @@ export const StudentView: React.FC = () => {
                                     opacity: showMindMap ? 1 : 0,
                                 }}
                             >
-                                <MindMapPanel
-                                    onGenerate={handleGenerateMindMap}
-                                    onEditSync={handleMindMapEditSync}
-                                    onSend={send}
-                                    mapKey={mapKey || undefined}
-                                    onAskSuggestion={(question) => {
-                                        setInputMessage(question.replace(/？$/, '') + ' — 请帮我详细探讨这个方向');
-                                        setActiveChannel('ai');
-                                    }}
-                                />
+                                <React.Suspense fallback={<PanelFallback />}>
+                                    <MindMapPanel
+                                        onGenerate={handleGenerateMindMap}
+                                        onEditSync={handleMindMapEditSync}
+                                        onSend={send}
+                                        mapKey={mapKey || undefined}
+                                        onAskSuggestion={(question) => {
+                                            setInputMessage(question.replace(/？$/, '') + ' — 请帮我详细探讨这个方向');
+                                            setActiveChannel('ai');
+                                        }}
+                                    />
+                                </React.Suspense>
                             </div>
                         )}
                     </div>
@@ -451,11 +466,17 @@ export const StudentView: React.FC = () => {
                                 : mobilePanel === 'chat' ? 'flex-1' : 'hidden'
                         }`}>
                             {activeChannel === 'assignment' ? (
-                                <AssignmentPanel />
+                                <React.Suspense fallback={<PanelFallback />}>
+                                    <AssignmentPanel />
+                                </React.Suspense>
                             ) : activeChannel === 'learning_space' ? (
-                                <LearningSpaceDesignPanel />
+                                <React.Suspense fallback={<PanelFallback />}>
+                                    <LearningSpaceDesignPanel />
+                                </React.Suspense>
                             ) : activeChannel === 'materials' ? (
-                                <MaterialsPanel />
+                                <React.Suspense fallback={<PanelFallback />}>
+                                    <MaterialsPanel />
+                                </React.Suspense>
                             ) : (
                                 <ChatInterface
                                     messages={currentMessages}
@@ -472,17 +493,19 @@ export const StudentView: React.FC = () => {
                         {/* 思维导图区 — 选中时占满 */}
                         {activeChannel !== 'assignment' && activeChannel !== 'materials' && activeChannel !== 'learning_space' && (
                             <div className={`min-h-0 ${mobilePanel === 'mindmap' ? 'flex-1' : 'hidden'}`}>
-                                <MindMapPanel
-                                    onGenerate={handleGenerateMindMap}
-                                    onEditSync={handleMindMapEditSync}
-                                    onSend={send}
-                                    mapKey={mapKey || undefined}
-                                    onAskSuggestion={(question) => {
-                                        setInputMessage(question.replace(/？$/, '') + ' — 请帮我详细探讨这个方向');
-                                        setActiveChannel('ai');
-                                        setMobilePanel('chat');
-                                    }}
-                                />
+                                <React.Suspense fallback={<PanelFallback />}>
+                                    <MindMapPanel
+                                        onGenerate={handleGenerateMindMap}
+                                        onEditSync={handleMindMapEditSync}
+                                        onSend={send}
+                                        mapKey={mapKey || undefined}
+                                        onAskSuggestion={(question) => {
+                                            setInputMessage(question.replace(/？$/, '') + ' — 请帮我详细探讨这个方向');
+                                            setActiveChannel('ai');
+                                            setMobilePanel('chat');
+                                        }}
+                                    />
+                                </React.Suspense>
                             </div>
                         )}
                     </div>
@@ -490,20 +513,28 @@ export const StudentView: React.FC = () => {
             </div>
 
             {/* P3: DeepSearch 弹窗 */}
-            <DeepSearchDialog
-                open={deepSearchOpen}
-                onClose={() => setDeepSearchOpen(false)}
-                sessionId={sessionId || undefined}
-            />
+            {deepSearchOpen && (
+                <React.Suspense fallback={null}>
+                    <DeepSearchDialog
+                        open={deepSearchOpen}
+                        onClose={() => setDeepSearchOpen(false)}
+                        sessionId={sessionId || undefined}
+                    />
+                </React.Suspense>
+            )}
 
             {/* AI 绘图预设确认弹窗 */}
-            <DrawingPromptDialog
-                isOpen={isDrawingDialogOpen}
-                isLoading={isDrawingPromptLoading}
-                initialPrompt={drawingPrompt}
-                onConfirm={handleRequestDrawing}
-                onCancel={() => setIsDrawingDialogOpen(false)}
-            />
+            {isDrawingDialogOpen && (
+                <React.Suspense fallback={null}>
+                    <DrawingPromptDialog
+                        isOpen={isDrawingDialogOpen}
+                        isLoading={isDrawingPromptLoading}
+                        initialPrompt={drawingPrompt}
+                        onConfirm={handleRequestDrawing}
+                        onCancel={() => setIsDrawingDialogOpen(false)}
+                    />
+                </React.Suspense>
+            )}
         </div>
     );
 };

@@ -164,62 +164,66 @@ AI 对话新增 working memory：
 
 ---
 
-## 5. 当前已知风险 / 待办
+## 5. 本轮稳定性与性能优化（2026-05-21）
 
-### P0：教师端学习分析查询需要优先修
+已完成：
 
-`/teacher/analytics` 仍存在 PostgreSQL grouping 风险，旧文档里记录过：
+- `/teacher/analytics` 已迁到 `backend/app/services/analytics_service.py` 的 `build_teacher_analytics`，按 PostgreSQL grouping 规则显式聚合，并保留原响应字段。
+- `backend/app/db/json_utils.py` 新增跨 PostgreSQL / SQLite 的 `jq()` 与 `jq_truthy()`，避免测试环境和线上 JSONB 查询行为分叉。
+- `chat`、`mindmap`、`jobs`、`ConnectionManager` 内的后台任务已接入可追踪任务集合；FastAPI shutdown 会取消并等待后台任务，WebSocket heartbeat 也会在断连时等待退出。
+- pytest integration/full suite “已 passed 但进程不退出”已修复：测试库改为文件型 SQLite + `NullPool`，避免 `aiosqlite` worker thread 残留。
+- 前端已做路由级懒加载：登录页、学生端、教师端按需加载；教师端重 tab 和学生端重面板也按需加载。
+- `frontend/vite.config.ts` 已补齐本地 proxy：`/learning-space-design`、`/jobs`、`/notifications`、`/mindmaps`、`/yjs` 等路径与线上 Nginx 对齐。
+- Vite `manualChunks` 已按 React、Markdown、React Flow/Yjs、Recharts、文档预览、zip、图标等拆分，不通过隐藏 warning 解决大包问题。
 
-- `scaffold_heatmap` / `scaffold_usage`
-- `ai_intervention_rate`
-- `discussion_depth`
-- `participation_heatmap`
+本轮验证结果：
 
-当前代码里部分查询仍按 JSON 表达式聚合，PostgreSQL 下需要确保 `SELECT` 与 `GROUP BY` 表达式一致，或者先做子查询再聚合。这个问题会拖慢教师端加载，即使接口最终可能返回 `200`。
+```text
+python -m compileall app                                                     PASS
+python -m pytest tests/unit -q                                               26 passed
+python -m pytest tests/integration/test_api_teacher.py tests/integration/test_api_learning_space_design.py -q
+                                                                              18 passed
+python -m pytest tests -q                                                     63 passed
+cmd /c npm run typecheck                                                     PASS
+cmd /c npm run build                                                         PASS
+```
 
-### P0：pytest 通过后进程不退出
+前端 build 关键产物：入口 `index` JS 约 56.6 kB，`react-vendor` 约 230.7 kB，`flow` 约 178.7 kB，`charts` 约 385.6 kB，`doc-preview` 约 404.5 kB；当前无 circular chunk warning，无 500 kB 以上 chunk warning。
 
-后端 unit 测试能快速正常退出，但 integration/full suite 出现“已打印 passed，却没有及时退出”的情况。
+---
 
-优先检查：
+## 6. 当前已知风险 / 待办
 
-- FastAPI lifespan 中 Redis / AI queue / manager shutdown。
-- 测试中的 session scope `event_loop` fixture。
-- `asyncio.create_task` 创建的后台任务是否被追踪与取消。
-- `jobs.py`、websocket handler、mindmap handler、chat handler 中的裸 `asyncio.create_task`。
+### P1：线上 analytics 性能观察
 
-### P1：本地 dev proxy 与线上 Nginx 对齐
+`/teacher/analytics` 已修 grouping 风险并有回归测试，但线上 PostgreSQL 数据量更大。部署后应观察最近日志和接口耗时；如果数据继续增长，下一步应考虑按 session/day/student 做轻量统计表或缓存。
 
-`frontend/vite.config.ts` 目前代理了不少后端路径，但应补齐新模块路径，避免本地开发时出现线上可用、本地 404/SPA fallback 的错觉。
+### P1：部署脚本无白屏化
 
-### P1：前端拆包
+本轮服务器发布会手动采用“先传 assets、最后覆盖 index.html、保留旧 hash 资源”的低影响方式。后续建议把这个流程沉淀进部署脚本，替换旧 `deploy.ps1` 中先删线上 `dist` 的前端发布方式。
 
-当前主 JS chunk 偏大。建议按以下方向拆：
+### P1：后台任务治理继续收束
 
-- React/vendor 基础包。
-- Markdown / mammoth / document preview。
-- React Flow / mindmap。
-- Recharts / analytics。
-- 教师端和学生端主要页面懒加载。
+WebSocket、jobs、manager 的后台任务已可追踪。后续可以继续把 AI worker 内部并发、重试、超时和 metrics 做成统一任务执行器，方便排查线上慢任务。
 
 ### P2：工作区清理
 
-当前仓库有大量未跟踪本地文件，包括日志、压缩包、debug 脚本、OpenAPI 输出、npm cache。提交时应只显式加入源码、配置、测试和必要文档，不要 `git add .`。
+当前仓库仍有大量未跟踪本地文件，包括 debug 脚本、临时部署脚本、查询文件、日志抓取脚本等。提交时继续只显式加入源码、配置、测试和必要文档，不要 `git add .`。
 
 ---
 
-## 6. 推荐下一步优化顺序
+## 7. 推荐下一步优化顺序
 
-1. 修 `/teacher/analytics` 的 PostgreSQL grouping 查询，补一个 PostgreSQL 或 SQLite 兼容的回归测试。
-2. 修 pytest integration/full suite 通过后不退出的问题，确保 CI 不会卡死。
-3. 补齐 `frontend/vite.config.ts` 本地代理路径，并验证学习空间设计、jobs、notifications、mindmaps 本地可访问。
-4. 拆分前端大 chunk，让首屏教师端/学生端加载更轻。
-5. 整理部署和临时文件策略：保留 `deploy.ps1`，清理 debug 脚本和日志产物，必要时扩展 `.gitignore`。
+1. 将低影响前端发布流程固化为脚本：上传新 assets、备份并最后替换 `index.html`、保留旧 hash 资源、发布后检查静态 404。
+2. 为 `/teacher/analytics` 增加接口耗时日志或 metrics，按真实线上数据判断是否需要缓存/预聚合。
+3. 给后台任务执行器补统一超时、任务名、失败计数和 shutdown 超时保护。
+4. 继续拆学生端聊天链路：Markdown 渲染、DeepSearch、文档预览按会话行为进一步延后加载。
+5. 清理未跟踪临时文件，只保留必要部署脚本和文档入口。
 
 ---
 
-## 7. 新窗口接手提示
+## 8. 新窗口接手提示
 
 ```md
-当前主项目在 `D:\Program\ai-project\EDtech\cothink`，Git 分支是 `test`，远程是 `origin https://github.com/ycxhhsh/ai-chat.git`。本轮重点已经不只是“学习空间设计”：还包括作业任务/自评/匿名互评、AI 对话 working memory、Markdown 渲染、设计草图提示弹窗、教师/学生端多处体验改造。学习空间设计已有独立 REST、模型、迁移、教师端/学生端 UI 和报告链路。作业互评新增 `assignment_tasks`、`assignment_task_targets`、`assignment_self_reviews`、`assignment_peer_reviews` 等表。当前验证结果：后端 compileall 通过，unit 测试 26 passed；integration/full suite 打印 passed 但进程不会及时退出；前端 typecheck 和 build 通过，但主 JS chunk 偏大。下一步优先修 `/teacher/analytics` PostgreSQL grouping 查询和 pytest 退出问题，然后补齐本地 Vite proxy 与前端拆包。
+当前主项目在 `D:\Program\ai-project\EDtech\cothink`，Git 分支是 `test`，远程是 `origin https://github.com/ycxhhsh/ai-chat.git`。学习空间设计、作业任务/自评/匿名互评、AI 对话 working memory、Markdown 渲染、设计草图提示弹窗、教师/学生端体验改造已经进入当前功能集。本轮稳定性优化已完成 `/teacher/analytics` PostgreSQL grouping 修复、JSON 查询跨数据库兼容、后台任务可追踪 shutdown、pytest passed 后不退出修复、前端路由/重面板懒加载、Vite proxy 与 manualChunks 优化。当前验证：compileall PASS、unit 26 passed、指定 integration 18 passed、全量 tests 63 passed、frontend typecheck/build PASS。下一步重点是把低影响部署流程沉淀成脚本，并观察线上 analytics 耗时与静态资源 404。
 ```

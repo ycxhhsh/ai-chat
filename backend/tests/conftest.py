@@ -1,8 +1,9 @@
 """Pytest 全局 fixtures：内存 SQLite + 测试用 FastAPI app。"""
 from __future__ import annotations
 
-import asyncio
 import os
+from contextlib import suppress
+from pathlib import Path
 from typing import AsyncIterator
 
 import pytest
@@ -15,9 +16,12 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 # ── 强制使用内存 SQLite，避免污染真实 DB ──
-os.environ["DB_URL"] = "sqlite+aiosqlite://"
+_TEST_DB_PATH = Path(__file__).resolve().parents[1] / ".pytest_cothink.sqlite3"
+_TEST_DB_URL = f"sqlite+aiosqlite:///{_TEST_DB_PATH.as_posix()}"
+os.environ["DB_URL"] = _TEST_DB_URL
 os.environ["REDIS_URL"] = ""
 os.environ["DEEPSEEK_API_KEY"] = "test-key-not-real"
 
@@ -36,7 +40,11 @@ from app.main import app  # noqa: E402
 get_settings.cache_clear()
 
 # ── 测试用内存数据库引擎 ──
-_test_engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+_test_engine = create_async_engine(
+    _TEST_DB_URL,
+    echo=False,
+    poolclass=NullPool,
+)
 _TestSessionLocal = async_sessionmaker(
     _test_engine, class_=AsyncSession, expire_on_commit=False,
 )
@@ -51,19 +59,14 @@ async def _override_get_db() -> AsyncIterator[AsyncSession]:
 app.dependency_overrides[get_db] = _override_get_db
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """为整个测试会话共享一个事件循环。"""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
 @pytest_asyncio.fixture(scope="session", autouse=True)
 async def setup_database():
     """创建所有表（一次性）。"""
     # 确保所有模型被导入
     import app.models  # noqa: F401
+
+    with suppress(FileNotFoundError):
+        _TEST_DB_PATH.unlink()
 
     async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -71,6 +74,8 @@ async def setup_database():
     async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await _test_engine.dispose()
+    with suppress(FileNotFoundError, PermissionError):
+        _TEST_DB_PATH.unlink()
 
 
 @pytest_asyncio.fixture

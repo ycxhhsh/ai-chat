@@ -63,7 +63,9 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        from app.infra.background_tasks import shutdown_background_tasks
         from app.websockets.manager import manager
+        await shutdown_background_tasks()
         await manager.shutdown()
         await redis_client.close()
         await engine.dispose()

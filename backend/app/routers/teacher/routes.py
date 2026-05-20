@@ -10,8 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select, case, literal_column, cast, String as SAString
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_db, require_teacher
@@ -26,16 +25,14 @@ from app.models.assignment import (
     AssignmentTaskTarget,
 )
 from app.models.ai_conversation import AiConversation
-from app.db.json_utils import jq
+from app.db.json_utils import jq, jq_truthy
 from app.services.peer_review_assignment import (
     SubmissionCandidate,
     build_balanced_peer_review_pairs,
 )
 from app.services.analytics_service import (
-    build_participation_heatmap,
-    build_word_cloud,
+    build_teacher_analytics,
     run_bloom_analysis,
-    build_mindmap_depth_stats,
 )
 from app.llm.factory import get_llm_client
 
@@ -191,7 +188,7 @@ async def get_stats(
     scaffold_usage_count = (
         await db.execute(
             select(func.count()).where(
-                jq(Message.metadata_info, 'is_scaffold_used') == 'true'  # noqa
+                jq_truthy(Message.metadata_info, "is_scaffold_used")
             )
         )
     ).scalar() or 0
@@ -638,220 +635,7 @@ async def get_analytics(
     _teacher: Annotated[User, Depends(require_teacher)],
 ):
     """深度分析数据：支架热力图、AI介入率、参与度等。"""
-
-    # 1. 支架使用热力图：每个支架被使用的次数
-    scaffold_heatmap = []
-    try:
-        result = await db.execute(
-            select(
-                jq(Message.metadata_info, 'scaffold_info', 'name').label("scaffold_name"),
-                func.count().label("usage_count"),
-            )
-            .where(
-                jq(Message.metadata_info, 'is_scaffold_used') == 'true'  # noqa
-            )
-            .group_by(jq(Message.metadata_info, 'scaffold_info', 'name'))
-        )
-        scaffold_heatmap = [
-            {"scaffold_name": row.scaffold_name, "count": row.usage_count}
-            for row in result if row.scaffold_name
-        ]
-    except Exception as e:
-        logger.warning("Scaffold heatmap query failed: %s", e)
-        await db.rollback()
-
-    # 2. AI 介入率：每个学生的 AI/总消息比
-    ai_intervention_rate = []
-    try:
-        # 获取每个学生的总发送消息数
-        student_msgs = await db.execute(
-            select(
-                jq(Message.sender, 'id').label("uid"),
-                jq(Message.sender, 'name').label("uname"),
-                func.count().label("total"),
-            )
-            .where(jq(Message.sender, 'role') == "student")
-            .group_by(jq(Message.sender, 'id'))
-        )
-        student_msg_data = {row.uid: {"name": row.uname, "total": row.total} for row in student_msgs}
-
-        # 获取每个学生收到的 AI 回复数（recipient_id == student_id）
-        ai_replies = await db.execute(
-            select(
-                Message.recipient_id.label("uid"),
-                func.count().label("ai_count"),
-            )
-            .where(
-                jq(Message.sender, 'role') == "ai",
-                Message.recipient_id.is_not(None),
-            )
-            .group_by(Message.recipient_id)
-        )
-        ai_reply_map = {row.uid: row.ai_count for row in ai_replies}
-
-        for uid, data in student_msg_data.items():
-            ai_count = ai_reply_map.get(uid, 0)
-            total = data["total"] + ai_count
-            ai_intervention_rate.append({
-                "user_id": uid,
-                "student_name": data["name"],
-                "student_messages": data["total"],
-                "ai_replies": ai_count,
-                "ai_ratio": round(ai_count / total * 100, 1) if total > 0 else 0,
-            })
-
-        ai_intervention_rate.sort(key=lambda x: x["ai_ratio"], reverse=True)
-    except Exception as e:
-        logger.warning("AI intervention rate query failed: %s", e)
-        await db.rollback()
-
-    # 3. 参与度曲线：按小时聚合消息数
-    participation_curve = []
-    try:
-        result = await db.execute(
-            select(
-                cast(func.date(Message.created_at), SAString).label("day"),
-                func.count().label("count"),
-            )
-            .group_by(func.date(Message.created_at))
-            .order_by(func.date(Message.created_at))
-            .limit(30)  # 最近 30 天按日
-        )
-        participation_curve = [
-            {"date": row.day, "count": row.count}
-            for row in result
-        ]
-    except Exception as e:
-        logger.warning("Participation curve query failed: %s", e)
-        await db.rollback()
-
-    # 4. 讨论深度：消息平均长度（按学生）
-    discussion_depth = []
-    try:
-        result = await db.execute(
-            select(
-                jq(Message.sender, 'name').label("name"),
-                func.avg(func.length(Message.content)).label("avg_length"),
-                func.count().label("msg_count"),
-            )
-            .where(jq(Message.sender, 'role') == "student")
-            .group_by(jq(Message.sender, 'id'))
-            .order_by(func.avg(func.length(Message.content)).desc())
-        )
-        discussion_depth = [
-            {"name": row.name, "avg_length": round(row.avg_length, 0), "count": row.msg_count}
-            for row in result
-        ]
-    except Exception as e:
-        logger.warning("Discussion depth query failed: %s", e)
-        await db.rollback()
-
-    # 5. 支架依赖度（全局）
-    scaffold_dependency = {"total": 0, "scaffold_used": 0, "rate": 0}
-    try:
-        total_student_msgs = (
-            await db.execute(
-                select(func.count()).where(
-                    jq(Message.sender, 'role') == "student"
-                )
-            )
-        ).scalar() or 0
-
-        scaffold_used_msgs = (
-            await db.execute(
-                select(func.count()).where(
-                    jq(Message.sender, 'role') == "student",
-                    jq(Message.metadata_info, 'is_scaffold_used') == 'true',
-                )
-            )
-        ).scalar() or 0
-
-        scaffold_dependency = {
-            "total": total_student_msgs,
-            "scaffold_used": scaffold_used_msgs,
-            "rate": round(scaffold_used_msgs / total_student_msgs * 100, 1) if total_student_msgs else 0,
-        }
-    except Exception as e:
-        logger.warning("Scaffold dependency query failed: %s", e)
-        await db.rollback()
-
-    # 6. 活跃会话
-    active_sessions = []
-    try:
-        result = await db.execute(
-            select(
-                Message.session_id,
-                func.count().label("message_count"),
-                func.max(Message.created_at).label("last_activity"),
-            )
-            .group_by(Message.session_id)
-            .order_by(func.max(Message.created_at).desc())
-            .limit(10)
-        )
-        active_sessions = [
-            {
-                "session_id": row.session_id,
-                "message_count": row.message_count,
-                "last_activity": row.last_activity.isoformat() if row.last_activity else "",
-            }
-            for row in result
-        ]
-    except Exception as e:
-        logger.warning("Active sessions query failed: %s", e)
-        await db.rollback()
-
-    # 关联 session_id → 组名（session_id == group.id）
-    if active_sessions:
-        try:
-            from app.models.group import Group
-            session_ids = [s["session_id"] for s in active_sessions]
-            group_result = await db.execute(
-                select(Group.id, Group.name).where(Group.id.in_(session_ids))
-            )
-            group_map = {row.id: row.name for row in group_result}
-            for s in active_sessions:
-                s["group_name"] = group_map.get(s["session_id"], s["session_id"][:12] + "...")
-        except Exception as e:
-            logger.warning("Group name lookup failed: %s", e)
-            await db.rollback()
-            for s in active_sessions:
-                s["group_name"] = s["session_id"][:12] + "..."
-
-    # 7. 参与度热力图（学生×日期）
-    participation_heatmap = []
-    try:
-        participation_heatmap = await build_participation_heatmap(db)
-    except Exception as e:
-        logger.warning("Participation heatmap wrapper failed: %s", e)
-        await db.rollback()
-
-    # 8. 词云
-    word_cloud = []
-    try:
-        word_cloud = await build_word_cloud(db)
-    except Exception as e:
-        logger.warning("Word cloud wrapper failed: %s", e)
-        await db.rollback()
-
-    # 9. P1: 思维导图深度统计
-    mindmap_depth = []
-    try:
-        mindmap_depth = await build_mindmap_depth_stats(db)
-    except Exception as e:
-        logger.warning("Mindmap depth stats wrapper failed: %s", e)
-        await db.rollback()
-
-    return {
-        "scaffold_usage": scaffold_heatmap,
-        "ai_intervention_rate": ai_intervention_rate,
-        "participation_trend": participation_curve,
-        "discussion_depth": discussion_depth,
-        "scaffold_dependency": scaffold_dependency,
-        "active_sessions": active_sessions,
-        "participation_heatmap": participation_heatmap,
-        "word_cloud": word_cloud,
-        "mindmap_depth": mindmap_depth,
-    }
+    return await build_teacher_analytics(db)
 
 
 # ────────────────────── 导出 CSV ──────────────────────

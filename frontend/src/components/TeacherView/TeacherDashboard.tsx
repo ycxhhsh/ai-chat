@@ -13,17 +13,23 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 
-// Sub-components
 import { StatCard } from './StatCard';
-import { StudentManager } from './StudentManager';
-import { MessageLog } from './MessageLog';
-import { ScaffoldManager } from './ScaffoldManager';
-import { AnalyticsPanel } from './AnalyticsPanel';
-import { KnowledgeBase } from './KnowledgeBase';
-import { AssignmentGrading } from './AssignmentGrading';
-import { CourseManager } from './CourseManager';
-import { GroupManager } from './GroupManager';
-import { LearningSpaceDesignManager } from './LearningSpaceDesignManager';
+
+const StudentManager = React.lazy(() => import('./StudentManager').then(mod => ({ default: mod.StudentManager })));
+const MessageLog = React.lazy(() => import('./MessageLog').then(mod => ({ default: mod.MessageLog })));
+const ScaffoldManager = React.lazy(() => import('./ScaffoldManager').then(mod => ({ default: mod.ScaffoldManager })));
+const AnalyticsPanel = React.lazy(() => import('./AnalyticsPanel').then(mod => ({ default: mod.AnalyticsPanel })));
+const KnowledgeBase = React.lazy(() => import('./KnowledgeBase').then(mod => ({ default: mod.KnowledgeBase })));
+const AssignmentGrading = React.lazy(() => import('./AssignmentGrading').then(mod => ({ default: mod.AssignmentGrading })));
+const CourseManager = React.lazy(() => import('./CourseManager').then(mod => ({ default: mod.CourseManager })));
+const GroupManager = React.lazy(() => import('./GroupManager').then(mod => ({ default: mod.GroupManager })));
+const LearningSpaceDesignManager = React.lazy(() => import('./LearningSpaceDesignManager').then(mod => ({ default: mod.LearningSpaceDesignManager })));
+
+const TabFallback: React.FC = () => (
+    <div className="h-full flex items-center justify-center text-sm text-gray-400">
+        加载中...
+    </div>
+);
 
 type TabType = 'overview' | 'students' | 'groups' | 'messages' | 'scaffolds' | 'learning_space_design' | 'analytics' | 'knowledge' | 'assignments' | 'courses';
 type ChatTypeFilter = 'all' | 'group' | 'personal';
@@ -222,46 +228,48 @@ export const TeacherDashboard: React.FC = () => {
                         </div>
                     )}
 
-                    {activeTab === 'students' && (
-                        <StudentManager students={students} totalStudents={totalStudents}
-                            studentPage={studentPage} loadStudents={loadStudents} loadStats={loadStats} />
-                    )}
+                    <React.Suspense fallback={<TabFallback />}>
+                        {activeTab === 'students' && (
+                            <StudentManager students={students} totalStudents={totalStudents}
+                                studentPage={studentPage} loadStudents={loadStudents} loadStats={loadStats} />
+                        )}
 
-                    {activeTab === 'groups' && (
-                        <GroupManager groups={groupsData as any} loadGroups={loadGroups} />
-                    )}
+                        {activeTab === 'groups' && (
+                            <GroupManager groups={groupsData as any} loadGroups={loadGroups} />
+                        )}
 
-                    {activeTab === 'messages' && (
-                        <MessageLog messages={messages} totalMessages={totalMessages} msgPage={msgPage}
-                            students={students} chatTypeFilter={chatTypeFilter} filterStudentId={filterStudentId}
-                            setChatTypeFilter={setChatTypeFilter} setFilterStudentId={setFilterStudentId}
-                            setMsgPage={setMsgPage} loadMessages={loadMessages} />
-                    )}
+                        {activeTab === 'messages' && (
+                            <MessageLog messages={messages} totalMessages={totalMessages} msgPage={msgPage}
+                                students={students} chatTypeFilter={chatTypeFilter} filterStudentId={filterStudentId}
+                                setChatTypeFilter={setChatTypeFilter} setFilterStudentId={setFilterStudentId}
+                                setMsgPage={setMsgPage} loadMessages={loadMessages} />
+                        )}
 
-                    {activeTab === 'scaffolds' && (
-                        <ScaffoldManager scaffolds={scaffolds} loadScaffolds={loadScaffolds} />
-                    )}
+                        {activeTab === 'scaffolds' && (
+                            <ScaffoldManager scaffolds={scaffolds} loadScaffolds={loadScaffolds} />
+                        )}
 
-                    {activeTab === 'learning_space_design' && (
-                        <LearningSpaceDesignManager />
-                    )}
+                        {activeTab === 'learning_space_design' && (
+                            <LearningSpaceDesignManager />
+                        )}
 
-                    {activeTab === 'analytics' && (
-                        <AnalyticsPanel analyticsData={analyticsData} loadAnalytics={loadAnalytics} />
-                    )}
+                        {activeTab === 'analytics' && (
+                            <AnalyticsPanel analyticsData={analyticsData} loadAnalytics={loadAnalytics} />
+                        )}
 
-                    {activeTab === 'knowledge' && (
-                        <KnowledgeBase documents={documents} loadDocuments={loadDocuments} />
-                    )}
+                        {activeTab === 'knowledge' && (
+                            <KnowledgeBase documents={documents} loadDocuments={loadDocuments} />
+                        )}
 
-                    {activeTab === 'assignments' && (
-                        <AssignmentGrading assignments={assignments} setAssignments={setAssignments}
-                            loadAssignments={loadAssignments} />
-                    )}
+                        {activeTab === 'assignments' && (
+                            <AssignmentGrading assignments={assignments} setAssignments={setAssignments}
+                                loadAssignments={loadAssignments} />
+                        )}
 
-                    {activeTab === 'courses' && (
-                        <CourseManager courses={courses} loadCourses={loadCourses} />
-                    )}
+                        {activeTab === 'courses' && (
+                            <CourseManager courses={courses} loadCourses={loadCourses} />
+                        )}
+                    </React.Suspense>
                 </div>
             </div>
 

@@ -10,6 +10,8 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
+from collections.abc import Awaitable
+from typing import Any
 
 from fastapi import WebSocket
 
@@ -32,12 +34,25 @@ class ConnectionManager:
         # 后台任务注册表（生命周期管理）
         self._background_tasks: set[asyncio.Task] = set()
 
-    def _track_task(self, coro) -> asyncio.Task:
+    def _track_task(self, coro: Awaitable[Any]) -> asyncio.Task:
         """创建并追踪后台任务，完成后自动移除。"""
         task = asyncio.create_task(coro)
         self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+
+        def _cleanup(done_task: asyncio.Task) -> None:
+            self._background_tasks.discard(done_task)
+            if done_task.cancelled():
+                return
+            exc = done_task.exception()
+            if exc:
+                logger.warning("WS background task failed: %s", exc, exc_info=exc)
+
+        task.add_done_callback(_cleanup)
         return task
+
+    def track_task(self, coro: Awaitable[Any]) -> asyncio.Task:
+        """Public wrapper for websocket handlers to track fire-and-forget work."""
+        return self._track_task(coro)
 
     async def shutdown(self) -> None:
         """优雅关闭所有后台任务。"""
@@ -47,6 +62,9 @@ class ConnectionManager:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
         for task in list(self._pubsub_tasks.values()):
             task.cancel()
+        if self._pubsub_tasks:
+            await asyncio.gather(*self._pubsub_tasks.values(), return_exceptions=True)
+        self._pubsub_tasks.clear()
 
     async def connect(
         self,
@@ -313,7 +331,7 @@ class ConnectionManager:
             )
 
         # 异步落库
-        asyncio.create_task(self._save_ai_message(ai_message))
+        self._track_task(self._save_ai_message(ai_message))
 
         # 自动更新思维导图
         try:
