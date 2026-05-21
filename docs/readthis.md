@@ -205,11 +205,25 @@ cmd /c npm run build                                                         PAS
 
 ### P1：线上 analytics 性能观察
 
-`/teacher/analytics` 已修 grouping 风险并有回归测试，但线上 PostgreSQL 数据量更大。部署后应观察最近日志和接口耗时；如果数据继续增长，下一步应考虑按 session/day/student 做轻量统计表或缓存。
+`/teacher/analytics` 已修 grouping 风险并有回归测试；本轮继续补了百分比数值护栏：`ai_ratio`、`scaffold_dependency.rate` 会限制在 `0-100`，前端 KPI 和图表也会对异常百分比做兜底。线上 PostgreSQL 数据量继续增长后，下一步应考虑按 session/day/student 做轻量统计表或缓存。
 
-### P1：部署脚本无白屏化
+### P1：低影响部署脚本
 
-本轮服务器发布会手动采用“先传 assets、最后覆盖 index.html、保留旧 hash 资源”的低影响方式。后续建议把这个流程沉淀进部署脚本，替换旧 `deploy.ps1` 中先删线上 `dist` 的前端发布方式。
+`deploy.ps1` 已改为低影响发布流程：
+
+- 前端：本地 build -> 上传并解压新 `assets` -> 备份旧 `index.html` -> 最后替换新 `index.html`，不删除旧 hash 资源。
+- 后端：上传 backend 包 -> tag rollback 镜像 -> 解包 -> build backend 镜像 -> Alembic current/upgrade -> 重启 `backend ai-worker grading-worker`。
+- 参数：`-FrontendOnly`、`-BackendOnly`、`-SkipBuild`、`-NoMigrate`、`-SmokeOnly`。
+- smoke check：首页、新入口 JS、`/healthz`、`/learning-space-design/meta`、容器状态、最近日志。
+
+常用命令：
+
+```powershell
+.\deploy.ps1 -SmokeOnly
+.\deploy.ps1 -FrontendOnly
+.\deploy.ps1 -BackendOnly -NoMigrate
+.\deploy.ps1
+```
 
 ### P1：后台任务治理继续收束
 
@@ -223,8 +237,8 @@ WebSocket、jobs、manager 的后台任务已可追踪。后续可以继续把 A
 
 ## 7. 推荐下一步优化顺序
 
-1. 将低影响前端发布流程固化为脚本：上传新 assets、备份并最后替换 `index.html`、保留旧 hash 资源、发布后检查静态 404。
-2. 为 `/teacher/analytics` 增加接口耗时日志或 metrics，按真实线上数据判断是否需要缓存/预聚合。
+1. 为 `/teacher/analytics` 增加接口耗时日志或 metrics，按真实线上数据判断是否需要缓存/预聚合。
+2. 将部署脚本的 smoke check 接入日常发布 checklist，持续观察静态资源 404 和 worker 日志。
 3. 给后台任务执行器补统一超时、任务名、失败计数和 shutdown 超时保护。
 4. 继续拆学生端聊天链路：Markdown 渲染、DeepSearch、文档预览按会话行为进一步延后加载。
 5. 清理未跟踪临时文件，只保留必要部署脚本和文档入口。
@@ -234,5 +248,5 @@ WebSocket、jobs、manager 的后台任务已可追踪。后续可以继续把 A
 ## 8. 新窗口接手提示
 
 ```md
-当前主项目在 `D:\Program\ai-project\EDtech\cothink`，Git 分支是 `test`，远程是 `origin https://github.com/ycxhhsh/ai-chat.git`。学习空间设计、作业任务/自评/匿名互评、AI 对话 working memory、Markdown 渲染、设计草图提示弹窗、教师/学生端体验改造已经进入当前功能集。本轮稳定性优化已完成 `/teacher/analytics` PostgreSQL grouping 修复、JSON 查询跨数据库兼容、后台任务可追踪 shutdown、pytest passed 后不退出修复、前端路由/重面板懒加载、Vite proxy 与 manualChunks 优化。当前验证：compileall PASS、unit 26 passed、指定 integration 18 passed、全量 tests 63 passed、frontend typecheck/build PASS。下一步重点是把低影响部署流程沉淀成脚本，并观察线上 analytics 耗时与静态资源 404。
+当前主项目在 `D:\Program\ai-project\EDtech\cothink`，Git 分支是 `test`，远程是 `origin https://github.com/ycxhhsh/ai-chat.git`。学习空间设计、作业任务/自评/匿名互评、AI 对话 working memory、Markdown 渲染、设计草图提示弹窗、教师/学生端体验改造已经进入当前功能集。本轮稳定性优化已完成 `/teacher/analytics` PostgreSQL grouping 修复、JSON 查询跨数据库兼容、后台任务可追踪 shutdown、pytest passed 后不退出修复、前端路由/重面板懒加载、Vite proxy 与 manualChunks 优化、AI 介入率/KPI 百分比护栏，以及低影响 `deploy.ps1`。当前验证目标：compileall、unit、指定 integration、全量 tests、frontend typecheck/build、`deploy.ps1 -SmokeOnly`。下一步重点是观察线上 analytics 耗时，并把 smoke check 纳入固定发布流程。
 ```

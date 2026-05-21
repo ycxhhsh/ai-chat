@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from collections import Counter
 from datetime import datetime, timezone
@@ -14,6 +15,25 @@ from app.models.message import Message
 from app.db.json_utils import jq, jq_truthy
 
 logger = logging.getLogger(__name__)
+
+
+def _clamp_percent(value: float | int | None, metric: str) -> float:
+    """Return a safe percentage in the inclusive 0-100 range."""
+    try:
+        numeric = float(value or 0)
+    except (TypeError, ValueError):
+        logger.warning("%s percentage is not numeric: %r", metric, value)
+        return 0
+    if not math.isfinite(numeric):
+        logger.warning("%s percentage is not finite: %r", metric, value)
+        return 0
+    clamped = min(100.0, max(0.0, numeric))
+    if clamped != numeric:
+        logger.warning(
+            "%s percentage out of range, clamped from %.3f to %.3f",
+            metric, numeric, clamped,
+        )
+    return round(clamped, 1)
 
 # jieba 分词（可选依赖，降级为简单空格分词）
 try:
@@ -286,12 +306,13 @@ async def build_teacher_analytics(db: AsyncSession) -> dict:
         for uid, data in student_msg_data.items():
             ai_count = ai_reply_map.get(uid, 0)
             total = data["total"] + ai_count
+            raw_ai_ratio = ai_count / total * 100 if total > 0 else 0
             ai_intervention_rate.append({
                 "user_id": uid,
                 "student_name": data["name"],
                 "student_messages": data["total"],
                 "ai_replies": ai_count,
-                "ai_ratio": round(ai_count / total * 100, 1) if total > 0 else 0,
+                "ai_ratio": _clamp_percent(raw_ai_ratio, "ai_ratio"),
             })
 
         ai_intervention_rate.sort(key=lambda x: x["ai_ratio"], reverse=True)
@@ -369,9 +390,10 @@ async def build_teacher_analytics(db: AsyncSession) -> dict:
         scaffold_dependency = {
             "total": total_student_msgs,
             "scaffold_used": scaffold_used_msgs,
-            "rate": (
-                round(scaffold_used_msgs / total_student_msgs * 100, 1)
-                if total_student_msgs else 0
+            "rate": _clamp_percent(
+                scaffold_used_msgs / total_student_msgs * 100
+                if total_student_msgs else 0,
+                "scaffold_dependency.rate",
             ),
         }
     except Exception as e:

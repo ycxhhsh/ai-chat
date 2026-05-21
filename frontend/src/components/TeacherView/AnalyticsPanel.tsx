@@ -13,6 +13,10 @@ import { Download, RefreshCw, TrendingUp } from 'lucide-react';
 
 const CHART_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
+function clampPercent(value: number): number {
+    return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : 0;
+}
+
 interface AnalyticsPanelProps {
     analyticsData: Record<string, any> | null;
     loadAnalytics: () => void;
@@ -98,7 +102,7 @@ function KpiCards({ data }: { data: Record<string, any> }) {
         .reduce((s: number, d: { ai_replies?: number }) => s + Number(d.ai_replies || 0), 0);
     const aiMessageTotal = totalStudentMessages + totalAiReplies;
     const avgAiRate = aiMessageTotal > 0
-        ? (totalAiReplies / aiMessageTotal * 100).toFixed(1)
+        ? clampPercent(totalAiReplies / aiMessageTotal * 100).toFixed(1)
         : '0';
     const days = data.participation_trend?.length || 1;
     const dailyAvg = (totalMsgs / days).toFixed(1);
@@ -142,14 +146,18 @@ function ParticipationTrend({ data }: { data?: any[] }) {
 // ── AI 介入率 ──
 function AiInterventionRate({ data }: { data?: any[] }) {
     if (!data?.length) return null;
+    const chartData = data.map(item => ({
+        ...item,
+        ai_ratio: clampPercent(Number(item.ai_ratio || 0)),
+    }));
     return (
         <div className="bg-white rounded-xl border border-gray-200 p-5">
             <h3 className="text-sm font-semibold text-gray-900 mb-4">AI 介入率（每位学生）</h3>
             <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={data}>
+                <BarChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                     <XAxis dataKey="student_name" tick={{ fontSize: 10 }} />
-                    <YAxis tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} domain={[0, 100]} />
                     <Tooltip />
                     <Bar dataKey="ai_ratio" fill="#8b5cf6" radius={[4, 4, 0, 0]} name="AI 消息占比" />
                 </BarChart>

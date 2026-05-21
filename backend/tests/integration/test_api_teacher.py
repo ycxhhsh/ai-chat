@@ -136,6 +136,55 @@ class TestTeacherAnalytics:
                 metadata_info={},
                 created_at=now,
             ),
+            Message(
+                message_id=f"analytics-student2-a-{uuid.uuid4()}",
+                session_id="analytics-group",
+                sender={
+                    "id": "analytics-student-2",
+                    "name": "Analytics Student 2",
+                    "role": "student",
+                },
+                content="Second student message A",
+                timing={"absolute_time": now.isoformat(), "relative_minute": 2},
+                metadata_info={},
+                created_at=now,
+            ),
+            Message(
+                message_id=f"analytics-student2-b-{uuid.uuid4()}",
+                session_id="analytics-group",
+                sender={
+                    "id": "analytics-student-2",
+                    "name": "Analytics Student 2",
+                    "role": "student",
+                },
+                content="Second student message B",
+                timing={"absolute_time": now.isoformat(), "relative_minute": 3},
+                metadata_info={},
+                created_at=now,
+            ),
+            Message(
+                message_id=f"analytics-student2-c-{uuid.uuid4()}",
+                session_id="analytics-group",
+                sender={
+                    "id": "analytics-student-2",
+                    "name": "Analytics Student 2",
+                    "role": "student",
+                },
+                content="Second student message C",
+                timing={"absolute_time": now.isoformat(), "relative_minute": 4},
+                metadata_info={},
+                created_at=now,
+            ),
+            Message(
+                message_id=f"analytics-ai2-{uuid.uuid4()}",
+                session_id="analytics-group",
+                recipient_id="analytics-student-2",
+                sender={"id": "ai", "name": "AI", "role": "ai"},
+                content="AI response to second student",
+                timing={"absolute_time": now.isoformat(), "relative_minute": 5},
+                metadata_info={},
+                created_at=now,
+            ),
         ])
         await db_session.commit()
 
@@ -147,10 +196,35 @@ class TestTeacherAnalytics:
         assert "participation_trend" in data
         assert "ai_intervention_rate" in data
         assert "scaffold_usage" in data
+        ai_rows = {
+            row["user_id"]: row
+            for row in data["ai_intervention_rate"]
+            if row["user_id"] in {"analytics-student", "analytics-student-2"}
+        }
+        assert ai_rows["analytics-student"]["ai_ratio"] == 50.0
+        assert ai_rows["analytics-student-2"]["ai_ratio"] == 25.0
+        assert all(0 <= row["ai_ratio"] <= 100 for row in ai_rows.values())
+        total_ai_replies = sum(row["ai_replies"] for row in ai_rows.values())
+        total_student_messages = sum(
+            row["student_messages"] for row in ai_rows.values()
+        )
+        global_ai_rate = round(
+            total_ai_replies
+            / (total_student_messages + total_ai_replies)
+            * 100,
+            1,
+        )
+        assert global_ai_rate == 33.3
         assert data["scaffold_usage"][0]["scaffold_name"] == "证据支架"
         assert data["ai_intervention_rate"][0]["student_name"] == "分析学生"
-        assert data["discussion_depth"][0]["name"] == "分析学生"
-        assert data["participation_heatmap"][0]["student_name"] == "分析学生"
+        assert any(
+            row["name"] == ai_rows["analytics-student"]["student_name"]
+            for row in data["discussion_depth"]
+        )
+        assert any(
+            row["student_name"] == ai_rows["analytics-student"]["student_name"]
+            for row in data["participation_heatmap"]
+        )
 
     async def test_student_cannot_get_analytics(
         self, async_client: AsyncClient, student_token: str,
