@@ -90,9 +90,15 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
 function KpiCards({ data }: { data: Record<string, any> }) {
     const totalMsgs = data.participation_trend
         ?.reduce((s: number, d: { count: number }) => s + d.count, 0) || 0;
-    const activeStudents = data.ai_intervention_rate?.length || 0;
-    const avgAiRate = activeStudents > 0
-        ? (data.ai_intervention_rate!.reduce((s: number, d: { ai_ratio: number }) => s + d.ai_ratio, 0) / activeStudents * 100).toFixed(1)
+    const aiInterventionRows = data.ai_intervention_rate || [];
+    const activeStudents = aiInterventionRows.length;
+    const totalStudentMessages = aiInterventionRows
+        .reduce((s: number, d: { student_messages?: number }) => s + Number(d.student_messages || 0), 0);
+    const totalAiReplies = aiInterventionRows
+        .reduce((s: number, d: { ai_replies?: number }) => s + Number(d.ai_replies || 0), 0);
+    const aiMessageTotal = totalStudentMessages + totalAiReplies;
+    const avgAiRate = aiMessageTotal > 0
+        ? (totalAiReplies / aiMessageTotal * 100).toFixed(1)
         : '0';
     const days = data.participation_trend?.length || 1;
     const dailyAvg = (totalMsgs / days).toFixed(1);
