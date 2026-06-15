@@ -432,6 +432,10 @@ async def worker_loop() -> None:
     import redis.asyncio as aioredis
     from app.core.config import get_settings
     from app.infra.ai_queue import QUEUE_HIGH, QUEUE_LOW
+    from app.infra.redis_blocking import (
+        blocking_read_redis_kwargs,
+        is_blocking_read_timeout,
+    )
 
     settings = get_settings()
 
@@ -454,6 +458,7 @@ async def worker_loop() -> None:
     redis = aioredis.from_url(
         settings.redis_url,
         decode_responses=True,
+        **blocking_read_redis_kwargs(),
     )
 
     logger.info("AI Worker started, listening on queues: %s, %s",
@@ -499,6 +504,9 @@ async def worker_loop() -> None:
             except json.JSONDecodeError as e:
                 logger.error("Invalid task JSON: %s", e)
             except Exception as e:
+                if is_blocking_read_timeout(e):
+                    logger.debug("Redis blocking read timed out while waiting for tasks")
+                    continue
                 logger.error("Worker loop error: %s", e)
                 await asyncio.sleep(1)
     finally:

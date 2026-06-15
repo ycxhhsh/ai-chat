@@ -121,13 +121,17 @@ async def grading_worker_loop() -> None:
     """评分 Worker 主循环 — BRPOP 消费评分任务。"""
     import redis.asyncio as aioredis
     from app.core.config import get_settings
+    from app.infra.redis_blocking import (
+        blocking_read_redis_kwargs,
+        is_blocking_read_timeout,
+    )
 
     logger.info("Grading worker started, listening on %s", GRADING_QUEUE)
     settings = get_settings()
     redis = aioredis.from_url(
         settings.redis_url,
         decode_responses=True,
-        socket_connect_timeout=5,
+        **blocking_read_redis_kwargs(),
     )
 
     try:
@@ -154,6 +158,9 @@ async def grading_worker_loop() -> None:
                     )
 
             except Exception as e:
+                if is_blocking_read_timeout(e):
+                    logger.debug("Redis blocking read timed out while waiting for grading tasks")
+                    continue
                 logger.error("Grading worker error: %s", e)
                 await asyncio.sleep(5)
     finally:
