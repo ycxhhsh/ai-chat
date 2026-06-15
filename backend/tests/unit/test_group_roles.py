@@ -1,4 +1,4 @@
-from app.services.group_roles import COLLABORATION_ROLES, choose_balanced_role
+from app.services.group_roles import COLLABORATION_ROLES, choose_balanced_role, role_payload
 
 
 def test_choose_balanced_role_prefers_unused_roles():
@@ -20,7 +20,35 @@ def test_choose_balanced_role_balances_repeated_roles():
     assert role in {"提问者", "解释者", "质疑者", "总结者"}
 
 
+def test_choose_balanced_role_avoids_roles_from_student_objections():
+    role = choose_balanced_role(
+        ["提问者", "解释者", "质疑者", "总结者"],
+        avoided_roles=["推进者"],
+    )
+
+    assert role != "推进者"
+
+
+def test_choose_balanced_role_falls_back_when_all_roles_are_avoided():
+    role = choose_balanced_role(
+        [],
+        avoided_roles=["推进者", "提问者", "解释者", "质疑者", "总结者"],
+    )
+
+    assert role in {"推进者", "提问者", "解释者", "质疑者", "总结者"}
+
+
 def test_collaboration_roles_have_student_prompt_text():
     assert set(COLLABORATION_ROLES) == {"推进者", "提问者", "解释者", "质疑者", "总结者"}
     assert all(COLLABORATION_ROLES[name]["description"] for name in COLLABORATION_ROLES)
     assert all(COLLABORATION_ROLES[name]["prompt"] for name in COLLABORATION_ROLES)
+    assert all(COLLABORATION_ROLES[name]["action"] for name in COLLABORATION_ROLES)
+
+
+def test_empty_role_payload_keeps_stable_shape():
+    assert role_payload(None) == {
+        "role": "",
+        "description": "",
+        "prompt": "",
+        "action": "",
+    }

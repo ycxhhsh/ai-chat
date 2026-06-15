@@ -63,6 +63,7 @@ class TestStudentGroupRoles:
         assert data["role"] in {"推进者", "提问者", "解释者", "质疑者", "总结者"}
         assert data["description"]
         assert data["prompt"]
+        assert data["action"]
         assert data["assigned_by"] == "system"
         assert data["pending_objection"] is None
 
@@ -121,6 +122,41 @@ class TestStudentGroupRoles:
             headers=_auth(token),
         )
         assert duplicate_resp.status_code == 409
+
+    async def test_new_role_assignment_avoids_roles_from_previous_objections(
+        self,
+        async_client: AsyncClient,
+    ):
+        teacher_token, _teacher = await _register_user(
+            async_client, "teacher", "异议反哺教师"
+        )
+        student_token, student = await _register_user(
+            async_client, "student", "异议反哺学生"
+        )
+        first_group = await _create_group(async_client, student_token, "第一次分组")
+
+        update_resp = await async_client.patch(
+            f"/teacher/groups/{first_group['id']}/members/{student['user_id']}/collaboration-role",
+            json={"collaboration_role": "推进者"},
+            headers=_auth(teacher_token),
+        )
+        assert update_resp.status_code == 200
+
+        objection_resp = await async_client.post(
+            f"/groups/{first_group['id']}/role-objections",
+            json={"reason": "我觉得这个角色不适合我", "note": "先避开推进者"},
+            headers=_auth(student_token),
+        )
+        assert objection_resp.status_code == 200
+
+        second_group = await _create_group(async_client, student_token, "第二次分组")
+        role_resp = await async_client.get(
+            f"/groups/{second_group['id']}/role",
+            headers=_auth(student_token),
+        )
+
+        assert role_resp.status_code == 200
+        assert role_resp.json()["role"] != "推进者"
 
 
 @pytest.mark.asyncio

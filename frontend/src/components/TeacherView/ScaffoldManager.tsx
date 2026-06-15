@@ -7,6 +7,10 @@ import api from '../../api';
 import { api as apiTyped } from '../../api';
 import clsx from 'clsx';
 import { RefreshCw, Zap, Heart, Target, Lightbulb, PenTool, CheckSquare } from 'lucide-react';
+import {
+    getStoredStageControlEnabled,
+    nextStoredStageControlEnabled,
+} from './stageControlSetting';
 
 interface ScaffoldManagerProps {
     scaffolds: Array<Record<string, unknown>>;
@@ -29,6 +33,9 @@ export const ScaffoldManager: React.FC<ScaffoldManagerProps> = ({
     const [suggestLoading, setSuggestLoading] = useState(false);
     const [globalStage, setGlobalStage] = useState('Empathy');
     const [pushingStage, setPushingStage] = useState(false);
+    const [stageControlEnabled, setStageControlEnabled] = useState(
+        () => getStoredStageControlEnabled(),
+    );
 
     // 加载开关状态
     useEffect(() => {
@@ -47,6 +54,12 @@ export const ScaffoldManager: React.FC<ScaffoldManagerProps> = ({
         } finally {
             setSuggestLoading(false);
         }
+    };
+
+    const toggleStageControl = () => {
+        setStageControlEnabled((current) =>
+            nextStoredStageControlEnabled(window.localStorage, !current)
+        );
     };
 
     const toggleScaffold = async (id: string, currentActive: boolean) => {
@@ -95,11 +108,31 @@ export const ScaffoldManager: React.FC<ScaffoldManagerProps> = ({
                 <div className="mb-4 flex items-center justify-between">
                     <div>
                         <h2 className="text-sm font-semibold text-gray-900">全局课程阶段控制 (EDIPT)</h2>
-                        <p className="text-xs text-gray-500 mt-1">切换阶段将强制全班小组跳转，并赋予 AI 该阶段的专属引导指令 (如禁止发散、要求画图等)。</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                            {stageControlEnabled
+                                ? '切换阶段将强制全班小组跳转，并赋予 AI 该阶段的专属引导指令。'
+                                : '当前已关闭阶段强制推进，适合单独测试小组协作角色功能。'}
+                        </p>
                     </div>
+                    <button
+                        onClick={toggleStageControl}
+                        className={clsx(
+                            'relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors',
+                            stageControlEnabled ? 'bg-indigo-600' : 'bg-gray-300'
+                        )}
+                        title={stageControlEnabled ? '关闭 EDIPT 阶段控制' : '开启 EDIPT 阶段控制'}
+                    >
+                        <span className={clsx(
+                            'inline-block h-4 w-4 rounded-full bg-white shadow transition-transform',
+                            stageControlEnabled ? 'translate-x-6' : 'translate-x-1'
+                        )} />
+                    </button>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className={clsx(
+                    'flex flex-wrap items-center justify-between gap-2',
+                    !stageControlEnabled && 'pointer-events-none opacity-40'
+                )}>
                     {EDIPT_STAGES.map((stage, idx) => {
                         const Icon = stage.icon;
                         const isActive = globalStage === stage.id;
@@ -107,7 +140,7 @@ export const ScaffoldManager: React.FC<ScaffoldManagerProps> = ({
                             <React.Fragment key={stage.id}>
                                 <button
                                     onClick={() => handlePushStage(stage.id)}
-                                    disabled={pushingStage}
+                                    disabled={pushingStage || !stageControlEnabled}
                                     className={clsx(
                                         'flex-1 relative group rounded-xl p-3 text-left transition-all duration-200 border-2',
                                         isActive

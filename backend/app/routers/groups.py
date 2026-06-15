@@ -12,7 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import get_current_user, get_db
 from app.models.group import Group, GroupMember, GroupRoleObjection
 from app.models.user import User
-from app.services.group_roles import assign_role_to_member, role_payload
+from app.services.group_roles import (
+    COLLABORATION_ROLES,
+    assign_role_to_member,
+    role_payload,
+)
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
@@ -42,6 +46,16 @@ class GroupResponse(BaseModel):
         from_attributes = True
 
 
+async def _get_user_avoided_roles(db: AsyncSession, user_id: str) -> list[str]:
+    result = await db.execute(
+        select(GroupRoleObjection.current_role).where(
+            GroupRoleObjection.user_id == user_id,
+            GroupRoleObjection.current_role.in_(list(COLLABORATION_ROLES)),
+        )
+    )
+    return [row[0] for row in result.all()]
+
+
 @router.post("", response_model=GroupResponse)
 async def create_group(
     body: GroupCreate,
@@ -63,7 +77,8 @@ async def create_group(
         user_id=str(user.user_id),
         role="admin",
     )
-    assign_role_to_member(member, [], "system")
+    avoided_roles = await _get_user_avoided_roles(db, str(user.user_id))
+    assign_role_to_member(member, [], "system", avoided_roles)
     db.add(member)
     await db.commit()
     await db.refresh(group)
@@ -107,7 +122,13 @@ async def join_group(
                     GroupMember.user_id != str(user.user_id),
                 )
             )
-            assign_role_to_member(member, [row[0] for row in roles.all()], "system")
+            avoided_roles = await _get_user_avoided_roles(db, str(user.user_id))
+            assign_role_to_member(
+                member,
+                [row[0] for row in roles.all()],
+                "system",
+                avoided_roles,
+            )
             db.add(member)
             await db.commit()
         return {"status": "already_joined", "group_id": group.id}
@@ -120,7 +141,13 @@ async def join_group(
     roles = await db.execute(
         select(GroupMember.collaboration_role).where(GroupMember.group_id == group.id)
     )
-    assign_role_to_member(member, [row[0] for row in roles.all()], "system")
+    avoided_roles = await _get_user_avoided_roles(db, str(user.user_id))
+    assign_role_to_member(
+        member,
+        [row[0] for row in roles.all()],
+        "system",
+        avoided_roles,
+    )
     db.add(member)
     await db.commit()
     return {"status": "joined", "group_id": group.id}
@@ -174,7 +201,13 @@ async def get_my_group_role(
                 GroupMember.user_id != str(user.user_id),
             )
         )
-        assign_role_to_member(member, [row[0] for row in roles.all()], "system")
+        avoided_roles = await _get_user_avoided_roles(db, str(user.user_id))
+        assign_role_to_member(
+            member,
+            [row[0] for row in roles.all()],
+            "system",
+            avoided_roles,
+        )
         db.add(member)
         await db.commit()
         await db.refresh(member)
@@ -232,7 +265,13 @@ async def create_role_objection(
                 GroupMember.user_id != str(user.user_id),
             )
         )
-        assign_role_to_member(member, [row[0] for row in roles.all()], "system")
+        avoided_roles = await _get_user_avoided_roles(db, str(user.user_id))
+        assign_role_to_member(
+            member,
+            [row[0] for row in roles.all()],
+            "system",
+            avoided_roles,
+        )
         db.add(member)
 
     existing = await db.execute(

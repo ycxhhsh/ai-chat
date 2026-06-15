@@ -353,7 +353,14 @@ export const StudentView: React.FC = () => {
                             </span>
                         )}
                     </div>
-                    <p className="mt-1 text-xs text-gray-600 line-clamp-2">{groupRole.prompt || groupRole.description}</p>
+                    <p className="mt-1 text-xs font-medium text-gray-700 line-clamp-2">
+                        {groupRole.action || groupRole.prompt || groupRole.description}
+                    </p>
+                    {groupRole.description && (
+                        <p className="mt-0.5 text-[11px] text-gray-500 line-clamp-1">
+                            {groupRole.description}
+                        </p>
+                    )}
                 </div>
                 <button
                     onClick={() => setIsRoleObjectionOpen(true)}

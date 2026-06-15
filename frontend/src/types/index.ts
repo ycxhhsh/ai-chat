@@ -108,6 +108,7 @@ export interface GroupRoleInfo {
     role: CollaborationRoleName | '';
     description: string;
     prompt: string;
+    action: string;
     assigned_by: 'system' | 'teacher' | string;
     assigned_at: string | null;
     pending_objection: GroupRoleObjection | null;
