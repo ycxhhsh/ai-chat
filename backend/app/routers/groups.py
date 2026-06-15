@@ -10,8 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, get_db
-from app.models.group import Group, GroupMember
+from app.models.group import Group, GroupMember, GroupRoleObjection
 from app.models.user import User
+from app.services.group_roles import assign_role_to_member, role_payload
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
@@ -22,6 +23,11 @@ class GroupCreate(BaseModel):
 
 class GroupJoin(BaseModel):
     invite_code: str
+
+
+class RoleObjectionCreate(BaseModel):
+    reason: str
+    note: str | None = None
 
 
 class GroupResponse(BaseModel):
@@ -57,6 +63,7 @@ async def create_group(
         user_id=str(user.user_id),
         role="admin",
     )
+    assign_role_to_member(member, [], "system")
     db.add(member)
     await db.commit()
     await db.refresh(group)
@@ -91,7 +98,18 @@ async def join_group(
             GroupMember.user_id == str(user.user_id),
         )
     )
-    if existing.scalar_one_or_none():
+    member = existing.scalar_one_or_none()
+    if member:
+        if not member.collaboration_role:
+            roles = await db.execute(
+                select(GroupMember.collaboration_role).where(
+                    GroupMember.group_id == group.id,
+                    GroupMember.user_id != str(user.user_id),
+                )
+            )
+            assign_role_to_member(member, [row[0] for row in roles.all()], "system")
+            db.add(member)
+            await db.commit()
         return {"status": "already_joined", "group_id": group.id}
 
     member = GroupMember(
@@ -99,6 +117,10 @@ async def join_group(
         user_id=str(user.user_id),
         role="member",
     )
+    roles = await db.execute(
+        select(GroupMember.collaboration_role).where(GroupMember.group_id == group.id)
+    )
+    assign_role_to_member(member, [row[0] for row in roles.all()], "system")
     db.add(member)
     await db.commit()
     return {"status": "joined", "group_id": group.id}
@@ -126,6 +148,124 @@ async def list_my_groups(
         )
         for g in groups
     ]
+
+
+@router.get("/{group_id}/role")
+async def get_my_group_role(
+    group_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """获取当前学生在小组中的协作角色。"""
+    result = await db.execute(
+        select(GroupMember).where(
+            GroupMember.group_id == group_id,
+            GroupMember.user_id == str(user.user_id),
+        )
+    )
+    member = result.scalar_one_or_none()
+    if not member:
+        raise HTTPException(status_code=403, detail="非小组成员")
+
+    if not member.collaboration_role:
+        roles = await db.execute(
+            select(GroupMember.collaboration_role).where(
+                GroupMember.group_id == group_id,
+                GroupMember.user_id != str(user.user_id),
+            )
+        )
+        assign_role_to_member(member, [row[0] for row in roles.all()], "system")
+        db.add(member)
+        await db.commit()
+        await db.refresh(member)
+
+    objection = await db.execute(
+        select(GroupRoleObjection)
+        .where(
+            GroupRoleObjection.group_id == group_id,
+            GroupRoleObjection.user_id == str(user.user_id),
+            GroupRoleObjection.status == "pending",
+        )
+        .order_by(GroupRoleObjection.created_at.desc())
+    )
+    pending = objection.scalars().first()
+    payload = role_payload(member.collaboration_role)
+    return {
+        **payload,
+        "assigned_by": member.role_assigned_by or "system",
+        "assigned_at": member.role_assigned_at.isoformat() if member.role_assigned_at else None,
+        "pending_objection": (
+            {
+                "id": pending.id,
+                "reason": pending.reason,
+                "note": pending.note,
+                "status": pending.status,
+                "created_at": pending.created_at.isoformat() if pending.created_at else "",
+            }
+            if pending
+            else None
+        ),
+    }
+
+
+@router.post("/{group_id}/role-objections")
+async def create_role_objection(
+    group_id: str,
+    body: RoleObjectionCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """学生提交协作角色异议。"""
+    result = await db.execute(
+        select(GroupMember).where(
+            GroupMember.group_id == group_id,
+            GroupMember.user_id == str(user.user_id),
+        )
+    )
+    member = result.scalar_one_or_none()
+    if not member:
+        raise HTTPException(status_code=403, detail="非小组成员")
+    if not member.collaboration_role:
+        roles = await db.execute(
+            select(GroupMember.collaboration_role).where(
+                GroupMember.group_id == group_id,
+                GroupMember.user_id != str(user.user_id),
+            )
+        )
+        assign_role_to_member(member, [row[0] for row in roles.all()], "system")
+        db.add(member)
+
+    existing = await db.execute(
+        select(GroupRoleObjection).where(
+            GroupRoleObjection.group_id == group_id,
+            GroupRoleObjection.user_id == str(user.user_id),
+            GroupRoleObjection.status == "pending",
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="已有待处理的角色异议")
+
+    objection = GroupRoleObjection(
+        group_id=group_id,
+        user_id=str(user.user_id),
+        current_role=member.collaboration_role or "",
+        reason=body.reason.strip(),
+        note=body.note.strip() if body.note else None,
+        status="pending",
+    )
+    db.add(objection)
+    await db.commit()
+    await db.refresh(objection)
+    return {
+        "id": objection.id,
+        "group_id": objection.group_id,
+        "user_id": objection.user_id,
+        "current_role": objection.current_role,
+        "reason": objection.reason,
+        "note": objection.note,
+        "status": objection.status,
+        "created_at": objection.created_at.isoformat() if objection.created_at else "",
+    }
 
 
 @router.delete("/{group_id}")

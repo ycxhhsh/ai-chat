@@ -9,11 +9,21 @@ import {
 } from 'lucide-react';
 import { copyToClipboard } from '../../utils/clipboard';
 
+const COLLABORATION_ROLES = ['推进者', '提问者', '解释者', '质疑者', '总结者'];
+
 interface GroupMember {
     user_id: string;
     name: string;
     email: string;
     role: string;
+    collaboration_role?: string;
+    role_assigned_by?: string;
+    pending_role_objection?: {
+        id: string;
+        reason: string;
+        note: string | null;
+        created_at: string;
+    } | null;
     joined_at: string;
 }
 
@@ -119,6 +129,35 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ groups, loadGroups }
             alert(err?.response?.data?.detail || '广播失败');
         } finally {
             setStageBroadcasting(null);
+        }
+    };
+
+    const handleCollaborationRoleChange = async (groupId: string, userId: string, role: string) => {
+        setLoading(true);
+        try {
+            await api.teacher.updateMemberCollaborationRole(groupId, userId, role);
+            loadGroups();
+        } catch (err: any) {
+            alert(err?.response?.data?.detail || '角色调整失败');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleResolveRoleObjection = async (member: GroupMember) => {
+        if (!member.pending_role_objection) return;
+        setLoading(true);
+        try {
+            await api.teacher.resolveGroupRoleObjection(member.pending_role_objection.id, {
+                status: 'resolved',
+                collaboration_role: member.collaboration_role || null,
+                resolution_note: '教师已处理角色异议',
+            });
+            loadGroups();
+        } catch (err: any) {
+            alert(err?.response?.data?.detail || '处理异议失败');
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -254,6 +293,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ groups, loadGroups }
                                                 <th className="px-5 py-2.5 text-left font-medium">姓名</th>
                                                 <th className="px-5 py-2.5 text-left font-medium">邮箱</th>
                                                 <th className="px-5 py-2.5 text-left font-medium">角色</th>
+                                                <th className="px-5 py-2.5 text-left font-medium">协作角色</th>
                                                 <th className="px-5 py-2.5 text-left font-medium">加入时间</th>
                                                 <th className="px-5 py-2.5 text-right font-medium">操作</th>
                                             </tr>
@@ -271,6 +311,38 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ groups, loadGroups }
                                                         }`}>
                                                             {m.role === 'admin' ? '组长' : '成员'}
                                                         </span>
+                                                    </td>
+                                                    <td className="px-5 py-3">
+                                                        <div className="flex flex-col gap-1.5">
+                                                            <select
+                                                                value={m.collaboration_role || ''}
+                                                                onChange={(e) => handleCollaborationRoleChange(group.id, m.user_id, e.target.value)}
+                                                                disabled={loading}
+                                                                className="w-28 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 focus:outline-none focus:ring-1 focus:ring-emerald-400 disabled:opacity-50"
+                                                            >
+                                                                <option value="">待分配</option>
+                                                                {COLLABORATION_ROLES.map((role) => (
+                                                                    <option key={role} value={role}>{role}</option>
+                                                                ))}
+                                                            </select>
+                                                            {m.pending_role_objection && (
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <span
+                                                                        className="max-w-[120px] truncate rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700"
+                                                                        title={m.pending_role_objection.note || m.pending_role_objection.reason}
+                                                                    >
+                                                                        有异议
+                                                                    </span>
+                                                                    <button
+                                                                        onClick={() => handleResolveRoleObjection(m)}
+                                                                        disabled={loading}
+                                                                        className="text-[10px] text-emerald-600 hover:text-emerald-700 disabled:opacity-50"
+                                                                    >
+                                                                        标记已处理
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                        </div>
                                                     </td>
                                                     <td className="px-5 py-3 text-sm text-gray-400">
                                                         {m.joined_at ? new Date(m.joined_at).toLocaleDateString('zh-CN') : '-'}
@@ -297,7 +369,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ groups, loadGroups }
                                             ))}
                                             {group.members.length === 0 && (
                                                 <tr>
-                                                    <td colSpan={5} className="px-5 py-6 text-center text-sm text-gray-300">暂无成员</td>
+                                                    <td colSpan={6} className="px-5 py-6 text-center text-sm text-gray-300">暂无成员</td>
                                                 </tr>
                                             )}
                                         </tbody>

@@ -14,7 +14,7 @@ import { Sidebar } from './Sidebar';
 import { ChatInterface } from '../Chat/ChatInterface';
 import { generateUUID } from '../../utils/uuid';
 import { PanelRight, PanelRightClose, Menu, MessageSquare as ChatIcon, GitBranch, Search } from 'lucide-react';
-import type { ChatMessage } from '../../types';
+import type { ChatMessage, GroupRoleInfo } from '../../types';
 import { NotificationBell } from '../NotificationBell';
 
 const MindMapPanel = React.lazy(() => import('../MindMap/MindMapPanel').then(mod => ({ default: mod.MindMapPanel })));
@@ -46,6 +46,14 @@ function useIsDesktop() {
 
 type ChannelType = 'group' | 'ai' | 'materials' | 'assignment' | 'learning_space';
 
+const ROLE_OBJECTION_REASONS = [
+    '我不理解这个角色要做什么',
+    '我觉得这个角色不适合我',
+    '我已经连续担任类似角色',
+    '小组内角色分工不合理',
+    '其他原因',
+];
+
 export const StudentView: React.FC = () => {
     const [activeChannel, setActiveChannel] = useState<ChannelType>('ai');
     const [showMindMap, setShowMindMap] = useState(false);
@@ -66,6 +74,11 @@ export const StudentView: React.FC = () => {
 
     // Initial stage from group data
     const [currentStage, setCurrentStage] = useState<string>(currentGroup?.current_stage || '');
+    const [groupRole, setGroupRole] = useState<GroupRoleInfo | null>(null);
+    const [isRoleObjectionOpen, setIsRoleObjectionOpen] = useState(false);
+    const [roleObjectionReason, setRoleObjectionReason] = useState(ROLE_OBJECTION_REASONS[0]);
+    const [roleObjectionNote, setRoleObjectionNote] = useState('');
+    const [isRoleObjectionSubmitting, setIsRoleObjectionSubmitting] = useState(false);
 
     // Sync from store if currentGroup changes, and allow WS to override it
     useEffect(() => {
@@ -73,6 +86,23 @@ export const StudentView: React.FC = () => {
             setCurrentStage(currentGroup.current_stage);
         }
     }, [currentGroup?.current_stage]);
+
+    useEffect(() => {
+        if (!currentGroupId) {
+            setGroupRole(null);
+            return;
+        }
+        let cancelled = false;
+        api.groups.role(currentGroupId)
+            .then((role) => {
+                if (!cancelled) setGroupRole(role);
+            })
+            .catch((e) => {
+                console.error('Failed to load group role:', e);
+                if (!cancelled) setGroupRole(null);
+            });
+        return () => { cancelled = true; };
+    }, [currentGroupId]);
 
     const {
         groupMessagesBySession,
@@ -270,6 +300,36 @@ export const StudentView: React.FC = () => {
         [send, mapKey]
     );
 
+    const handleMindMapAskSuggestion = useCallback((question: string) => {
+        const trimmed = question.trim();
+        const prompt = trimmed.includes('请')
+            ? trimmed
+            : `${trimmed.replace(/？$/, '')} — 请帮我详细探讨这个方向`;
+        setInputMessage(prompt);
+        setActiveChannel('ai');
+        setMobilePanel('chat');
+    }, []);
+
+    const handleSubmitRoleObjection = useCallback(async () => {
+        if (!currentGroupId || !groupRole || groupRole.pending_objection) return;
+        setIsRoleObjectionSubmitting(true);
+        try {
+            await api.groups.createRoleObjection(
+                currentGroupId,
+                roleObjectionReason,
+                roleObjectionNote.trim() || null,
+            );
+            const updatedRole = await api.groups.role(currentGroupId);
+            setGroupRole(updatedRole);
+            setIsRoleObjectionOpen(false);
+            setRoleObjectionNote('');
+        } catch (err: any) {
+            alert(err?.response?.data?.detail || '提交失败');
+        } finally {
+            setIsRoleObjectionSubmitting(false);
+        }
+    }, [currentGroupId, groupRole, roleObjectionNote, roleObjectionReason]);
+
     // P0 修复：直接订阅 groupMessagesBySession（响应式），按当前 sessionId 获取对应小组的消息
     // 未选择小组时显示空消息列表
     const groupMessages = (activeChannel === 'group' && currentGroupId)
@@ -277,6 +337,34 @@ export const StudentView: React.FC = () => {
         : [];
     const currentMessages =
         activeChannel === 'ai' ? aiMessages : groupMessages;
+
+    const groupRoleBanner = activeChannel === 'group' && currentGroupId && groupRole ? (
+        <div className="px-4 py-2 border-b border-emerald-100 bg-emerald-50/80">
+            <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] font-medium text-emerald-600">我的本轮角色</span>
+                        <span className="px-2 py-0.5 text-xs font-semibold text-emerald-700 bg-white border border-emerald-200 rounded-full">
+                            {groupRole.role || '待分配'}
+                        </span>
+                        {groupRole.pending_objection && (
+                            <span className="px-2 py-0.5 text-[10px] font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-full">
+                                异议待处理
+                            </span>
+                        )}
+                    </div>
+                    <p className="mt-1 text-xs text-gray-600 line-clamp-2">{groupRole.prompt || groupRole.description}</p>
+                </div>
+                <button
+                    onClick={() => setIsRoleObjectionOpen(true)}
+                    disabled={!!groupRole.pending_objection}
+                    className="flex-shrink-0 px-2.5 py-1 text-xs text-emerald-700 bg-white border border-emerald-200 rounded-md hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    提出异议
+                </button>
+            </div>
+        </div>
+    ) : null;
 
     const channelTitles: Record<ChannelType, string> = {
         group: currentGroupId ? '小组讨论' : '请先选择或创建小组',
@@ -427,6 +515,7 @@ export const StudentView: React.FC = () => {
                                     isAiChannel={activeChannel === 'ai'}
                                     disabled={activeChannel === 'group' && !currentGroupId}
                                     currentStage={activeChannel === 'group' ? currentStage : undefined}
+                                    headerAccessory={groupRoleBanner}
                                     onRequestDrawing={handleRequestDrawing}
                                 />
                             )}
@@ -447,10 +536,7 @@ export const StudentView: React.FC = () => {
                                         onEditSync={handleMindMapEditSync}
                                         onSend={send}
                                         mapKey={mapKey || undefined}
-                                        onAskSuggestion={(question) => {
-                                            setInputMessage(question.replace(/？$/, '') + ' — 请帮我详细探讨这个方向');
-                                            setActiveChannel('ai');
-                                        }}
+                                        onAskSuggestion={handleMindMapAskSuggestion}
                                     />
                                 </React.Suspense>
                             </div>
@@ -486,6 +572,7 @@ export const StudentView: React.FC = () => {
                                     isAiChannel={activeChannel === 'ai'}
                                     disabled={activeChannel === 'group' && !currentGroupId}
                                     currentStage={activeChannel === 'group' ? currentStage : undefined}
+                                    headerAccessory={groupRoleBanner}
                                     onRequestDrawing={handleRequestDrawing}
                                 />
                             )}
@@ -499,11 +586,7 @@ export const StudentView: React.FC = () => {
                                         onEditSync={handleMindMapEditSync}
                                         onSend={send}
                                         mapKey={mapKey || undefined}
-                                        onAskSuggestion={(question) => {
-                                            setInputMessage(question.replace(/？$/, '') + ' — 请帮我详细探讨这个方向');
-                                            setActiveChannel('ai');
-                                            setMobilePanel('chat');
-                                        }}
+                                        onAskSuggestion={handleMindMapAskSuggestion}
                                     />
                                 </React.Suspense>
                             </div>
@@ -534,6 +617,56 @@ export const StudentView: React.FC = () => {
                         onCancel={() => setIsDrawingDialogOpen(false)}
                     />
                 </React.Suspense>
+            )}
+
+            {isRoleObjectionOpen && groupRole && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setIsRoleObjectionOpen(false)}>
+                    <div className="w-full max-w-md rounded-xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+                        <div className="border-b border-gray-100 px-5 py-4">
+                            <h3 className="text-sm font-semibold text-gray-900">提出角色异议</h3>
+                            <p className="mt-1 text-xs text-gray-500">当前角色：{groupRole.role || '待分配'}</p>
+                        </div>
+                        <div className="space-y-4 px-5 py-4">
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-medium text-gray-500">原因</span>
+                                <select
+                                    value={roleObjectionReason}
+                                    onChange={(e) => setRoleObjectionReason(e.target.value)}
+                                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none"
+                                >
+                                    {ROLE_OBJECTION_REASONS.map((reason) => (
+                                        <option key={reason} value={reason}>{reason}</option>
+                                    ))}
+                                </select>
+                            </label>
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-medium text-gray-500">补充说明</span>
+                                <textarea
+                                    value={roleObjectionNote}
+                                    onChange={(e) => setRoleObjectionNote(e.target.value)}
+                                    rows={3}
+                                    className="w-full resize-none rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none"
+                                    placeholder="可以说明你希望老师考虑的情况"
+                                />
+                            </label>
+                        </div>
+                        <div className="flex justify-end gap-2 border-t border-gray-100 px-5 py-4">
+                            <button
+                                onClick={() => setIsRoleObjectionOpen(false)}
+                                className="px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100 rounded-md"
+                            >
+                                取消
+                            </button>
+                            <button
+                                onClick={handleSubmitRoleObjection}
+                                disabled={isRoleObjectionSubmitting}
+                                className="px-3 py-1.5 text-sm text-white bg-emerald-600 hover:bg-emerald-700 rounded-md disabled:opacity-50"
+                            >
+                                {isRoleObjectionSubmitting ? '提交中...' : '提交'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );

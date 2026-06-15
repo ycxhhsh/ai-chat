@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import get_db, require_teacher
 from app.models.message import Message
 from app.models.user import User
-from app.models.group import Group, GroupMember
+from app.models.group import Group, GroupMember, GroupRoleObjection
 from app.models.assignment import (
     Assignment,
     AssignmentPeerReview,
@@ -33,6 +33,11 @@ from app.services.peer_review_assignment import (
 from app.services.analytics_service import (
     build_teacher_analytics,
     run_bloom_analysis,
+)
+from app.services.group_roles import (
+    COLLABORATION_ROLES,
+    assign_role_to_member,
+    role_payload,
 )
 from app.llm.factory import get_llm_client
 
@@ -1033,27 +1038,242 @@ async def list_all_groups(
             .where(GroupMember.group_id == g.id)
             .order_by(GroupMember.joined_at.asc())
         )
-        members = [
-            {
+        member_rows = members_result.all()
+        existing_roles = [gm.collaboration_role for gm, _u in member_rows]
+        changed = False
+        for gm, _u in member_rows:
+            if not gm.collaboration_role:
+                assign_role_to_member(gm, existing_roles, "system")
+                existing_roles.append(gm.collaboration_role)
+                db.add(gm)
+                changed = True
+        if changed:
+            await db.commit()
+
+        objections_result = await db.execute(
+            select(GroupRoleObjection).where(
+                GroupRoleObjection.group_id == g.id,
+                GroupRoleObjection.status == "pending",
+            )
+        )
+        pending_by_user = {
+            objection.user_id: objection
+            for objection in objections_result.scalars().all()
+        }
+
+        members = []
+        for gm, u in member_rows:
+            pending = pending_by_user.get(gm.user_id)
+            role_info = role_payload(gm.collaboration_role)
+            members.append({
                 "user_id": gm.user_id,
                 "name": u.name,
                 "email": u.email,
                 "role": gm.role,
+                "collaboration_role": role_info["role"],
+                "collaboration_role_description": role_info["description"],
+                "collaboration_role_prompt": role_info["prompt"],
+                "role_assigned_by": gm.role_assigned_by or "system",
+                "role_assigned_at": gm.role_assigned_at.isoformat() if gm.role_assigned_at else None,
+                "pending_role_objection": (
+                    {
+                        "id": pending.id,
+                        "reason": pending.reason,
+                        "note": pending.note,
+                        "created_at": pending.created_at.isoformat() if pending.created_at else "",
+                    }
+                    if pending
+                    else None
+                ),
                 "joined_at": gm.joined_at.isoformat() if gm.joined_at else "",
-            }
-            for gm, u in members_result.all()
-        ]
+            })
         group_data.append({
             "id": g.id,
             "name": g.name,
             "invite_code": g.invite_code,
             "created_by": g.created_by,
             "created_at": g.created_at.isoformat() if g.created_at else "",
+            "current_stage": g.current_stage,
             "member_count": len(members),
             "members": members,
         })
 
     return group_data
+
+
+class CollaborationRoleUpdateBody(BaseModel):
+    collaboration_role: str
+
+
+@router.patch("/groups/{group_id}/members/{user_id}/collaboration-role")
+async def update_member_collaboration_role(
+    group_id: str,
+    user_id: str,
+    body: CollaborationRoleUpdateBody,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    teacher: Annotated[User, Depends(require_teacher)],
+):
+    """教师手动调整小组成员协作角色。"""
+    if body.collaboration_role not in COLLABORATION_ROLES:
+        raise HTTPException(status_code=422, detail="无效协作角色")
+
+    result = await db.execute(
+        select(GroupMember).where(
+            GroupMember.group_id == group_id,
+            GroupMember.user_id == user_id,
+        )
+    )
+    member = result.scalar_one_or_none()
+    if not member:
+        raise HTTPException(status_code=404, detail="小组成员不存在")
+
+    member.collaboration_role = body.collaboration_role
+    member.role_assigned_by = "teacher"
+    member.role_assigned_at = datetime.now(timezone.utc)
+    db.add(member)
+    await db.commit()
+    await db.refresh(member)
+    role_info = role_payload(member.collaboration_role)
+    return {
+        "group_id": group_id,
+        "user_id": user_id,
+        "collaboration_role": role_info["role"],
+        "description": role_info["description"],
+        "prompt": role_info["prompt"],
+        "role_assigned_by": member.role_assigned_by,
+        "role_assigned_at": member.role_assigned_at.isoformat() if member.role_assigned_at else None,
+        "updated_by": str(teacher.user_id),
+    }
+
+
+@router.get("/group-role-objections")
+async def list_group_role_objections(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _teacher: Annotated[User, Depends(require_teacher)],
+    status: str = "pending",
+):
+    """教师查看角色异议列表。"""
+    result = await db.execute(
+        select(GroupRoleObjection, Group.name.label("group_name"), User.name.label("student_name"))
+        .join(Group, Group.id == GroupRoleObjection.group_id)
+        .join(User, User.user_id == GroupRoleObjection.user_id)
+        .where(GroupRoleObjection.status == status)
+        .order_by(GroupRoleObjection.created_at.desc())
+    )
+    return [
+        {
+            "id": objection.id,
+            "group_id": objection.group_id,
+            "group_name": group_name,
+            "user_id": objection.user_id,
+            "student_name": student_name,
+            "current_role": objection.current_role,
+            "reason": objection.reason,
+            "note": objection.note,
+            "status": objection.status,
+            "created_at": objection.created_at.isoformat() if objection.created_at else "",
+        }
+        for objection, group_name, student_name in result.all()
+    ]
+
+
+class RoleObjectionResolveBody(BaseModel):
+    status: str
+    collaboration_role: str | None = None
+    resolution_note: str | None = None
+
+
+@router.post("/group-role-objections/{objection_id}/resolve")
+async def resolve_group_role_objection(
+    objection_id: str,
+    body: RoleObjectionResolveBody,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    teacher: Annotated[User, Depends(require_teacher)],
+):
+    """教师处理学生角色异议。"""
+    if body.status not in {"resolved", "rejected"}:
+        raise HTTPException(status_code=422, detail="处理状态必须是 resolved 或 rejected")
+    if body.collaboration_role and body.collaboration_role not in COLLABORATION_ROLES:
+        raise HTTPException(status_code=422, detail="无效协作角色")
+
+    result = await db.execute(
+        select(GroupRoleObjection).where(GroupRoleObjection.id == objection_id)
+    )
+    objection = result.scalar_one_or_none()
+    if not objection:
+        raise HTTPException(status_code=404, detail="角色异议不存在")
+    if objection.status != "pending":
+        raise HTTPException(status_code=409, detail="该异议已处理")
+
+    if body.status == "resolved" and body.collaboration_role:
+        member_result = await db.execute(
+            select(GroupMember).where(
+                GroupMember.group_id == objection.group_id,
+                GroupMember.user_id == objection.user_id,
+            )
+        )
+        member = member_result.scalar_one_or_none()
+        if not member:
+            raise HTTPException(status_code=404, detail="小组成员不存在")
+        member.collaboration_role = body.collaboration_role
+        member.role_assigned_by = "teacher"
+        member.role_assigned_at = datetime.now(timezone.utc)
+        db.add(member)
+
+    objection.status = body.status
+    objection.resolution_note = body.resolution_note
+    objection.resolved_by = str(teacher.user_id)
+    objection.resolved_at = datetime.now(timezone.utc)
+    db.add(objection)
+    await db.commit()
+    await db.refresh(objection)
+    return {
+        "id": objection.id,
+        "group_id": objection.group_id,
+        "user_id": objection.user_id,
+        "current_role": objection.current_role,
+        "reason": objection.reason,
+        "note": objection.note,
+        "status": objection.status,
+        "resolution_note": objection.resolution_note,
+        "resolved_by": objection.resolved_by,
+        "resolved_at": objection.resolved_at.isoformat() if objection.resolved_at else None,
+    }
+
+
+@router.post("/groups/{group_id}/collaboration-roles/rebalance")
+async def rebalance_group_collaboration_roles(
+    group_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _teacher: Annotated[User, Depends(require_teacher)],
+):
+    """教师触发某个小组重新均衡分配协作角色。"""
+    members_result = await db.execute(
+        select(GroupMember)
+        .where(GroupMember.group_id == group_id)
+        .order_by(GroupMember.joined_at.asc())
+    )
+    members = members_result.scalars().all()
+    if not members:
+        raise HTTPException(status_code=404, detail="小组不存在或暂无成员")
+
+    assigned_roles: list[str | None] = []
+    for member in members:
+        assign_role_to_member(member, assigned_roles, "system")
+        assigned_roles.append(member.collaboration_role)
+        db.add(member)
+    await db.commit()
+    return {
+        "group_id": group_id,
+        "members": [
+            {
+                "user_id": member.user_id,
+                "collaboration_role": member.collaboration_role,
+                "role_assigned_by": member.role_assigned_by,
+            }
+            for member in members
+        ],
+    }
 
 
 @router.delete("/groups/{group_id}/members/{user_id}")

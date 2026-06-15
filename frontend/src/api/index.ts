@@ -10,6 +10,7 @@ import type {
     AssignmentTaskDetail,
     AssignmentTaskListItem,
     Group,
+    GroupRoleInfo,
     LLMProvider,
     LearningSpaceQuestion,
     LearningSpaceSessionPayload,
@@ -100,6 +101,14 @@ export const api = {
         members: async (groupId: string) => {
             const res = await http.get(`/groups/${groupId}/members`);
             return res.data as { user_id: string; name: string; role: string }[];
+        },
+        role: async (groupId: string) => {
+            const res = await http.get(`/groups/${groupId}/role`);
+            return res.data as GroupRoleInfo;
+        },
+        createRoleObjection: async (groupId: string, reason: string, note?: string | null) => {
+            const res = await http.post(`/groups/${groupId}/role-objections`, { reason, note: note || null });
+            return res.data;
         },
         pushStage: (groupId: string, stage: string) =>
             http.post(`/groups/${groupId}/stage`, { stage }).then(r => r.data),
@@ -401,6 +410,23 @@ export const api = {
         },
         deleteGroup: async (groupId: string) => {
             const res = await http.delete(`/teacher/groups/${groupId}`);
+            return res.data;
+        },
+        updateMemberCollaborationRole: async (groupId: string, userId: string, collaborationRole: string) => {
+            const res = await http.patch(`/teacher/groups/${groupId}/members/${userId}/collaboration-role`, {
+                collaboration_role: collaborationRole,
+            });
+            return res.data;
+        },
+        resolveGroupRoleObjection: async (
+            objectionId: string,
+            data: { status: 'resolved' | 'rejected'; collaboration_role?: string | null; resolution_note?: string | null },
+        ) => {
+            const res = await http.post(`/teacher/group-role-objections/${objectionId}/resolve`, {
+                status: data.status,
+                collaboration_role: data.collaboration_role || null,
+                resolution_note: data.resolution_note || null,
+            });
             return res.data;
         },
         getScaffoldSuggestEnabled: async (): Promise<{ enabled: boolean }> => {

@@ -30,6 +30,7 @@ interface Props {
     disabled?: boolean;
     onRequestDrawing?: () => void;
     currentStage?: string;
+    headerAccessory?: React.ReactNode;
 }
 
 export const ChatInterface: React.FC<Props> = ({
@@ -41,6 +42,7 @@ export const ChatInterface: React.FC<Props> = ({
     disabled = false,
     onRequestDrawing,
     currentStage,
+    headerAccessory,
 }) => {
     const { user } = useAuthStore();
     const { isAiTyping, aiStreamContent, highlightedMsgId, scaffoldSuggestion, clearScaffoldSuggestion, searchSources, clearSearchSources } = useChatStore();
@@ -181,6 +183,8 @@ export const ChatInterface: React.FC<Props> = ({
                 </div>
             )}
 
+            {headerAccessory}
+
             {/* Messages 区域 */}
             <div
                 ref={(el) => {
@@ -310,4 +314,3 @@ export const ChatInterface: React.FC<Props> = ({
         </div>
     );
 };
-

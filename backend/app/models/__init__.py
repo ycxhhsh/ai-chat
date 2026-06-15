@@ -1,6 +1,6 @@
 from app.models.base import Base
 from app.models.user import User
-from app.models.group import Group, GroupMember
+from app.models.group import Group, GroupMember, GroupRoleObjection
 from app.models.message import Message
 from app.models.scaffold import Scaffold, UserScaffoldState
 from app.models.assignment import (
@@ -32,6 +32,7 @@ __all__ = [
     "User",
     "Group",
     "GroupMember",
+    "GroupRoleObjection",
     "Message",
     "Scaffold",
     "UserScaffoldState",
