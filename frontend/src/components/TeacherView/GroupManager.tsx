@@ -17,6 +17,13 @@ interface GroupMember {
     email: string;
     role: string;
     collaboration_role?: string;
+    collaboration_role_action?: string;
+    role_action?: {
+        observed: boolean;
+        label: string;
+        evidence_message_id: string | null;
+        evidence_excerpt: string;
+    };
     role_assigned_by?: string;
     pending_role_objection?: {
         id: string;
@@ -294,6 +301,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ groups, loadGroups }
                                                 <th className="px-5 py-2.5 text-left font-medium">邮箱</th>
                                                 <th className="px-5 py-2.5 text-left font-medium">角色</th>
                                                 <th className="px-5 py-2.5 text-left font-medium">协作角色</th>
+                                                <th className="px-5 py-2.5 text-left font-medium">行动观察</th>
                                                 <th className="px-5 py-2.5 text-left font-medium">加入时间</th>
                                                 <th className="px-5 py-2.5 text-right font-medium">操作</th>
                                             </tr>
@@ -344,6 +352,25 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ groups, loadGroups }
                                                             )}
                                                         </div>
                                                     </td>
+                                                    <td className="px-5 py-3">
+                                                        <div className="flex flex-col gap-1">
+                                                            <span className={`inline-flex w-fit rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+                                                                m.role_action?.observed
+                                                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                                    : 'border-gray-200 bg-gray-50 text-gray-500'
+                                                            }`}>
+                                                                {m.role_action?.observed ? '已观察到' : '暂未观察到'}
+                                                            </span>
+                                                            <span
+                                                                className="max-w-[160px] truncate text-[11px] text-gray-400"
+                                                                title={m.role_action?.evidence_excerpt || m.collaboration_role_action || ''}
+                                                            >
+                                                                {m.role_action?.observed
+                                                                    ? m.role_action.evidence_excerpt
+                                                                    : (m.collaboration_role_action || m.role_action?.label || '等待行动')}
+                                                            </span>
+                                                        </div>
+                                                    </td>
                                                     <td className="px-5 py-3 text-sm text-gray-400">
                                                         {m.joined_at ? new Date(m.joined_at).toLocaleDateString('zh-CN') : '-'}
                                                     </td>
@@ -369,7 +396,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ groups, loadGroups }
                                             ))}
                                             {group.members.length === 0 && (
                                                 <tr>
-                                                    <td colSpan={6} className="px-5 py-6 text-center text-sm text-gray-300">暂无成员</td>
+                                                    <td colSpan={7} className="px-5 py-6 text-center text-sm text-gray-300">暂无成员</td>
                                                 </tr>
                                             )}
                                         </tbody>

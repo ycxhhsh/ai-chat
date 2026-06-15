@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from httpx import AsyncClient
+
+from app.models.message import Message
 
 
 def _auth(token: str) -> dict:
@@ -194,6 +197,59 @@ class TestTeacherGroupRoles:
         }
         assert listed_member["role_assigned_by"] == "system"
         assert listed_member["pending_role_objection"] is None
+        assert listed_member["role_action"]["observed"] is False
+
+    async def test_teacher_group_list_shows_observed_role_action(
+        self,
+        async_client: AsyncClient,
+        db_session,
+    ):
+        teacher_token, _teacher = await _register_user(
+            async_client, "teacher", "角色观察教师"
+        )
+        student_token, student = await _register_user(
+            async_client, "student", "角色观察学生"
+        )
+        group = await _create_group(async_client, student_token)
+        update_resp = await async_client.patch(
+            f"/teacher/groups/{group['id']}/members/{student['user_id']}/collaboration-role",
+            json={"collaboration_role": "提问者"},
+            headers=_auth(teacher_token),
+        )
+        assert update_resp.status_code == 200
+
+        now = datetime.now(timezone.utc)
+        db_session.add(
+            Message(
+                message_id=f"role-action-{uuid.uuid4()}",
+                session_id=group["id"],
+                sender={
+                    "id": student["user_id"],
+                    "name": student["name"],
+                    "role": "student",
+                },
+                content="为什么这个空间布局能帮助小组协作？",
+                timing={"absolute_time": now.isoformat(), "relative_minute": 0},
+                metadata_info={},
+                created_at=now,
+            )
+        )
+        await db_session.commit()
+
+        resp = await async_client.get(
+            "/teacher/groups",
+            headers=_auth(teacher_token),
+        )
+
+        listed_group = next(item for item in resp.json() if item["id"] == group["id"])
+        listed_member = next(
+            member
+            for member in listed_group["members"]
+            if member["user_id"] == student["user_id"]
+        )
+        assert listed_member["role_action"]["observed"] is True
+        assert listed_member["role_action"]["evidence_message_id"]
+        assert "为什么" in listed_member["role_action"]["evidence_excerpt"]
 
     async def test_teacher_can_update_member_collaboration_role(
         self,

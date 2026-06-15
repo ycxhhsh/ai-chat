@@ -361,6 +361,11 @@ export const StudentView: React.FC = () => {
                             {groupRole.description}
                         </p>
                     )}
+                    {groupRole.pending_objection && (
+                        <p className="mt-1 text-[11px] text-amber-700">
+                            老师处理前，系统下次分配会先参考你的异议。
+                        </p>
+                    )}
                 </div>
                 <button
                     onClick={() => setIsRoleObjectionOpen(true)}
@@ -632,6 +637,7 @@ export const StudentView: React.FC = () => {
                         <div className="border-b border-gray-100 px-5 py-4">
                             <h3 className="text-sm font-semibold text-gray-900">提出角色异议</h3>
                             <p className="mt-1 text-xs text-gray-500">当前角色：{groupRole.role || '待分配'}</p>
+                            <p className="mt-1 text-xs text-amber-700">提交后老师会在教师端看到；系统后续随机分配也会尽量避开你提出异议的角色。</p>
                         </div>
                         <div className="space-y-4 px-5 py-4">
                             <label className="block">

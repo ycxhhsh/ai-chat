@@ -39,6 +39,7 @@ from app.services.group_roles import (
     assign_role_to_member,
     role_payload,
 )
+from app.services.group_role_actions import detect_role_action
 from app.llm.factory import get_llm_client
 
 logger = logging.getLogger(__name__)
@@ -1060,11 +1061,33 @@ async def list_all_groups(
             objection.user_id: objection
             for objection in objections_result.scalars().all()
         }
+        messages_result = await db.execute(
+            select(Message)
+            .where(
+                Message.session_id == g.id,
+                Message.conversation_id.is_(None),
+            )
+            .order_by(Message.created_at.asc())
+        )
+        messages_by_user: dict[str, list[dict[str, str]]] = {}
+        for message in messages_result.scalars().all():
+            sender = message.sender if isinstance(message.sender, dict) else {}
+            sender_id = sender.get("id")
+            if not sender_id:
+                continue
+            messages_by_user.setdefault(str(sender_id), []).append({
+                "message_id": message.message_id,
+                "content": message.content,
+            })
 
         members = []
         for gm, u in member_rows:
             pending = pending_by_user.get(gm.user_id)
             role_info = role_payload(gm.collaboration_role)
+            role_action = detect_role_action(
+                role_info["role"],
+                messages_by_user.get(gm.user_id, []),
+            )
             members.append({
                 "user_id": gm.user_id,
                 "name": u.name,
@@ -1073,6 +1096,8 @@ async def list_all_groups(
                 "collaboration_role": role_info["role"],
                 "collaboration_role_description": role_info["description"],
                 "collaboration_role_prompt": role_info["prompt"],
+                "collaboration_role_action": role_info.get("action", ""),
+                "role_action": role_action,
                 "role_assigned_by": gm.role_assigned_by or "system",
                 "role_assigned_at": gm.role_assigned_at.isoformat() if gm.role_assigned_at else None,
                 "pending_role_objection": (
