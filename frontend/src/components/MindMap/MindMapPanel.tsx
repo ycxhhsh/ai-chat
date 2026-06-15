@@ -38,8 +38,8 @@ import { useEdges } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';  // @ts-ignore css import
 import { useMindMapStore, type FlowEdge } from '../../store/useMindMapStore';
 import { useChatStore } from '../../store/useChatStore';
-import type { MindMapNodeData, MindMapNodeType } from '../../types';
-import { Loader2, Sparkles, Plus, Download, MessageCircle, ChevronDown, LayoutGrid, Search, Maximize2, Minimize2 } from 'lucide-react';
+import type { MindMapNodeData, MindMapNodeType, MindMapQualityHint, MindMapSourceStudent } from '../../types';
+import { Loader2, Sparkles, Plus, Download, MessageCircle, ChevronDown, LayoutGrid, Search, Maximize2, Minimize2, CircleAlert } from 'lucide-react';
 import { DraftOverlay } from './DraftOverlay';
 import { applyLayout, LAYOUT_OPTIONS, type LayoutType } from './layoutEngine';
 import { toPng, toSvg } from 'html-to-image';
@@ -89,6 +89,10 @@ const HoverContext = createContext<{
     neighborIds: Set<string>;
     neighborEdgeIds: Set<string>;
 }>({ hoveredNodeId: null, neighborIds: new Set(), neighborEdgeIds: new Set() });
+
+const EditSyncContext = createContext<{
+    sync: (operation: string, payload: Record<string, unknown>) => void;
+}>({ sync: () => undefined });
 
 // ── ErrorBoundary ──
 
@@ -151,6 +155,58 @@ function computeEdgeCurveOffsets(edges: FlowEdge[]): Map<string, number> {
     return result;
 }
 
+function buildQualityHints(
+    node: Node<MindMapNodeData>,
+    allNodes: Node<MindMapNodeData>[],
+    allEdges: FlowEdge[],
+): MindMapQualityHint[] {
+    if (node.id.startsWith('draft_')) return [];
+
+    const nodeById = new Map(allNodes.map((n) => [n.id, n]));
+    const relatedEdges = allEdges.filter((e) => e.source === node.id || e.target === node.id);
+    const sourceIds = node.data.source_message_ids
+        ?? (node.data.source_message_id ? [node.data.source_message_id] : []);
+    const hasEvidenceNeighbor = relatedEdges.some((edge) => {
+        const otherId = edge.source === node.id ? edge.target : edge.source;
+        return nodeById.get(otherId)?.data.nodeType === 'evidence';
+    });
+    const hints: MindMapQualityHint[] = [];
+
+    if ((node.data.nodeType === 'argument' || node.data.nodeType === 'concept') && !hasEvidenceNeighbor) {
+        hints.push({
+            id: 'missing_evidence',
+            label: '缺证据',
+            prompt: `围绕思维导图节点“${node.data.label}”，请用2-3个追问引导我补充证据或例子，不要直接替我完成答案。`,
+        });
+    }
+
+    if (node.data.nodeType === 'question' && relatedEdges.length === 0) {
+        hints.push({
+            id: 'open_question',
+            label: '待回应',
+            prompt: `围绕思维导图中的疑问“${node.data.label}”，请引导我思考可以怎样回应、验证或拆解这个问题。`,
+        });
+    }
+
+    if (allNodes.length > 1 && relatedEdges.length === 0) {
+        hints.push({
+            id: 'isolated',
+            label: '未连接',
+            prompt: `思维导图节点“${node.data.label}”现在还没有和其他节点建立关系，请引导我判断它应该连接到哪个观点、证据或问题。`,
+        });
+    }
+
+    if (['argument', 'evidence', 'question'].includes(node.data.nodeType) && sourceIds.length === 0) {
+        hints.push({
+            id: 'missing_source',
+            label: '缺来源',
+            prompt: `思维导图节点“${node.data.label}”缺少原始讨论来源，请提醒我如何从小组发言中找到支撑它的原话。`,
+        });
+    }
+
+    return hints.slice(0, 2);
+}
+
 // ── Neo4j 风格结点组件（紧凑胶囊 + emoji + 文字） ──
 
 const QUICK_CONNECT_ACTIONS = [
@@ -165,6 +221,7 @@ function MindMapCustomNode({ data, id, selected }: NodeProps<Node<MindMapNodeDat
     const inputRef = useRef<HTMLInputElement>(null);
     const { updateNode, removeNode, addNode, addEdge: storeAddEdge } = useMindMapStore();
     const setHighlightedMsgId = useChatStore((s) => s.setHighlightedMsgId);
+    const { sync } = useContext(EditSyncContext);
 
     // P1-1: 节点度缩放
     const allEdges = useEdges();
@@ -179,6 +236,8 @@ function MindMapCustomNode({ data, id, selected }: NodeProps<Node<MindMapNodeDat
     const emoji = NODE_EMOJIS[data.nodeType] || '💡';
     const sourceMessageIds = (data.source_message_ids as string[] | undefined)
         ?? (data.source_message_id ? [data.source_message_id as string] : []);
+    const sourceStudents = (data.source_students as MindMapSourceStudent[] | undefined) ?? [];
+    const qualityHints = (data.quality_hints as MindMapQualityHint[] | undefined) ?? [];
 
     useEffect(() => {
         if (isEditing && inputRef.current) {
@@ -194,10 +253,12 @@ function MindMapCustomNode({ data, id, selected }: NodeProps<Node<MindMapNodeDat
 
     const handleSave = useCallback(() => {
         if (editValue.trim() && editValue !== data.label) {
-            updateNode(id, { label: editValue.trim() });
+            const label = editValue.trim();
+            updateNode(id, { label });
+            sync('update_node', { id, label });
         }
         setIsEditing(false);
-    }, [editValue, data.label, id, updateNode]);
+    }, [editValue, data.label, id, updateNode, sync]);
 
     const handleKeyDown = useCallback(
         (e: React.KeyboardEvent) => {
@@ -207,13 +268,13 @@ function MindMapCustomNode({ data, id, selected }: NodeProps<Node<MindMapNodeDat
         [handleSave]
     );
 
-    const handleTraceSource = useCallback(() => {
-        if (sourceMessageIds.length === 0) return;
-        if (sourceMessageIds.length === 1) {
-            setHighlightedMsgId(sourceMessageIds[0]);
+    const handleTraceSource = useCallback((messageIds = sourceMessageIds) => {
+        if (messageIds.length === 0) return;
+        if (messageIds.length === 1) {
+            setHighlightedMsgId(messageIds[0]);
             return;
         }
-        sourceMessageIds.forEach((msgId, idx) => {
+        messageIds.forEach((msgId, idx) => {
             setTimeout(() => setHighlightedMsgId(msgId), idx * 500);
         });
     }, [sourceMessageIds, setHighlightedMsgId]);
@@ -221,10 +282,21 @@ function MindMapCustomNode({ data, id, selected }: NodeProps<Node<MindMapNodeDat
     const handleQuickConnect = useCallback(
         (action: typeof QUICK_CONNECT_ACTIONS[number]) => {
             const newId = `n-${Date.now()}`;
-            addNode({ id: newId, label: '新节点', type: action.nodeType, position: { x: 0, y: 0 } });
-            storeAddEdge({ id: `e-${Date.now()}`, source: id, target: newId, label: action.edgeLabel });
+            const newNode = { id: newId, label: '新节点', type: action.nodeType, position: { x: 0, y: 0 } };
+            const newEdge = { id: `e-${Date.now()}`, source: id, target: newId, label: action.edgeLabel };
+            addNode(newNode);
+            storeAddEdge(newEdge);
+            sync('add_node', newNode);
+            sync('add_edge', newEdge);
         },
-        [id, addNode, storeAddEdge]
+        [id, addNode, storeAddEdge, sync]
+    );
+
+    const handleAskQualityHint = useCallback(
+        (hint: MindMapQualityHint) => {
+            window.dispatchEvent(new CustomEvent('mindmap-ask-suggestion', { detail: hint.prompt }));
+        },
+        []
     );
 
     return (
@@ -295,11 +367,52 @@ function MindMapCustomNode({ data, id, selected }: NodeProps<Node<MindMapNodeDat
                         <Search className="w-2.5 h-2.5" style={{ color: style.text }} />
                     </button>
                 )}
+                {qualityHints.length > 0 && (
+                    <span
+                        className="flex-shrink-0 rounded-full bg-white/25 p-0.5"
+                        title={qualityHints.map((hint) => hint.label).join('、')}
+                    >
+                        <CircleAlert className="w-2.5 h-2.5" style={{ color: style.text }} />
+                    </span>
+                )}
             </div>
+
+            {(sourceStudents.length > 0 || qualityHints.length > 0) && (
+                <div className="absolute left-1/2 top-full mt-1 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity z-20 pointer-events-auto">
+                    <div className="flex max-w-[240px] flex-wrap justify-center gap-1 rounded-lg border border-gray-200 bg-white/95 px-2 py-1 shadow-lg backdrop-blur-sm">
+                        {sourceStudents.map((student) => (
+                            <button
+                                key={student.id}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleTraceSource(student.message_ids);
+                                }}
+                                className="max-w-[92px] truncate rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 hover:bg-emerald-100"
+                                title={`${student.name} · 点击定位原始消息`}
+                            >
+                                {student.name}
+                            </button>
+                        ))}
+                        {qualityHints.map((hint) => (
+                            <button
+                                key={hint.id}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleAskQualityHint(hint);
+                                }}
+                                className="max-w-[92px] truncate rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700 hover:bg-amber-100"
+                                title="点击让 AI 引导补强这个节点"
+                            >
+                                {hint.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* 删除按钮 */}
             <button
-                onClick={(e) => { e.stopPropagation(); removeNode(id); }}
+                onClick={(e) => { e.stopPropagation(); removeNode(id); sync('remove_node', { id }); }}
                 className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-[10px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow z-10"
             >
                 ×
@@ -318,6 +431,7 @@ function MindMapCustomEdge({
     sourcePosition, targetPosition, label, style = {}, markerEnd,
 }: EdgeProps) {
     const { removeEdge, updateEdgeLabel } = useMindMapStore();
+    const { sync } = useContext(EditSyncContext);
     const [hovered, setHovered] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(String(label || ''));
@@ -350,9 +464,10 @@ function MindMapCustomEdge({
         const trimmed = editValue.trim();
         if (trimmed && trimmed !== String(label || '')) {
             updateEdgeLabel(id, trimmed);
+            sync('update_edge', { id, label: trimmed });
         }
         setIsEditing(false);
-    }, [editValue, label, id, updateEdgeLabel]);
+    }, [editValue, label, id, updateEdgeLabel, sync]);
 
     const handleKeyDown = useCallback(
         (e: React.KeyboardEvent) => {
@@ -424,6 +539,7 @@ function MindMapCustomEdge({
                             onClick={(e) => {
                                 e.stopPropagation();
                                 removeEdge(id);
+                                sync('remove_edge', { id });
                             }}
                             className="absolute -top-2.5 -right-2.5 w-6 h-6 bg-red-500 text-white rounded-full text-[11px] leading-none flex items-center justify-center hover:bg-red-600 shadow-md"
                         >
@@ -453,6 +569,7 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
         edges,
         isGenerating,
         addNode,
+        updateNodePosition,
         addEdge: storeAddEdge,
         onNodesChange,
         onEdgesChange,
@@ -507,9 +624,20 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
             style: { ...(e.style || {}), _curveOffset: offsets.get(e.id) || 0 },
         }));
     }, [rawMergedEdges]);
+    const enhancedMergedNodes = useMemo(
+        () => mergedNodes.map((node) => ({
+            ...node,
+            data: {
+                ...node.data,
+                quality_hints: buildQualityHints(node, mergedNodes, mergedEdges),
+            },
+        })),
+        [mergedNodes, mergedEdges]
+    );
 
     const nodeTypes = useMemo(() => ({ mindMapNode: MindMapCustomNode }), []);
     const edgeTypes = useMemo(() => ({ default: MindMapCustomEdge }), []);
+    const editSyncValue = useMemo(() => ({ sync: onEditSync }), [onEditSync]);
 
     // P1-2: Hover 高亮上下文
     const hoverCtx = useMemo(() => {
@@ -568,6 +696,9 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
             if (rawT < 1) {
                 requestAnimationFrame(animate);
             } else {
+                for (const [nodeId, position] of newPositions) {
+                    onEditSync('update_node_position', { id: nodeId, position });
+                }
                 // 动画结束后 fitView
                 reactFlowInstance.fitView({ padding: 0.3, duration: 200 });
             }
@@ -576,7 +707,7 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
         requestAnimationFrame(animate);
         setActiveLayout(type);
         setShowLayoutMenu(false);
-    }, [mergedNodes, mergedEdges, onNodesChange, reactFlowInstance]);
+    }, [mergedNodes, mergedEdges, onNodesChange, onEditSync, reactFlowInstance]);
 
     // 拖拽连线创建新边
     const handleConnect = useCallback(
@@ -625,6 +756,7 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
                 const payload = JSON.parse(raw) as {
                     text: string;
                     role: string;
+                    senderId?: string;
                     senderName: string;
                     message_id: string;
                 };
@@ -652,6 +784,16 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
                     type: nodeType,
                     position,
                     source_message_id: payload.message_id,
+                    source_message_ids: [payload.message_id],
+                    ...(payload.role === 'student'
+                        ? {
+                            source_students: [{
+                                id: payload.senderId || payload.senderName,
+                                name: payload.senderName,
+                                message_ids: [payload.message_id],
+                            }],
+                        }
+                        : {}),
                 };
                 addNode(newNode);
                 onEditSync('add_node', newNode);
@@ -660,6 +802,33 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
             }
         },
         [reactFlowInstance, addNode, onEditSync]
+    );
+
+    const handleNodeDragStop = useCallback(
+        (_event: React.MouseEvent, node: Node<MindMapNodeData>) => {
+            if (node.id.startsWith('draft_')) return;
+            updateNodePosition(node.id, node.position);
+            onEditSync('update_node_position', { id: node.id, position: node.position });
+        },
+        [updateNodePosition, onEditSync]
+    );
+
+    const handleNodesDelete = useCallback(
+        (deletedNodes: Node<MindMapNodeData>[]) => {
+            deletedNodes
+                .filter((node) => !node.id.startsWith('draft_'))
+                .forEach((node) => onEditSync('remove_node', { id: node.id }));
+        },
+        [onEditSync]
+    );
+
+    const handleEdgesDelete = useCallback(
+        (deletedEdges: FlowEdge[]) => {
+            deletedEdges
+                .filter((edge) => !edge.id.startsWith('draft_'))
+                .forEach((edge) => onEditSync('remove_edge', { id: edge.id }));
+        },
+        [onEditSync]
     );
 
     // 导出 Markdown
@@ -890,13 +1059,17 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
                     <p className="text-xs mt-1">点击 "AI 提取" 从对话中生成知识图谱</p>
                 </div>
             ) : (
+                <EditSyncContext.Provider value={editSyncValue}>
                 <HoverContext.Provider value={hoverCtx}>
                     <ReactFlow
-                        nodes={mergedNodes}
+                        nodes={enhancedMergedNodes}
                         edges={mergedEdges}
                         onNodesChange={onNodesChange}
                         onEdgesChange={onEdgesChange}
                         onConnect={handleConnect}
+                        onNodeDragStop={handleNodeDragStop}
+                        onNodesDelete={handleNodesDelete}
+                        onEdgesDelete={handleEdgesDelete}
                         onNodeMouseEnter={(_e, node) => setHoveredNodeId(node.id)}
                         onNodeMouseLeave={() => setHoveredNodeId(null)}
                         nodeTypes={nodeTypes}
@@ -937,6 +1110,7 @@ function MindMapFlowInner({ onGenerate, onEditSync, onSend, onAskSuggestion }: M
                         />
                     </ReactFlow>
                 </HoverContext.Provider>
+                </EditSyncContext.Provider>
             )}
         </div>
     );

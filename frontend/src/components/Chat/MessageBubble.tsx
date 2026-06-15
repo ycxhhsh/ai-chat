@@ -76,6 +76,7 @@ export const MessageBubble: React.FC<Props> = React.memo(({ message, isOwn }) =>
             const payload = JSON.stringify({
                 text: content,
                 role: sender.role,
+                senderId: sender.id,
                 senderName: sender.name,
                 message_id: message.message_id,
             });
@@ -192,11 +193,24 @@ export const MessageBubble: React.FC<Props> = React.memo(({ message, isOwn }) =>
                         <GripVertical className="w-3.5 h-3.5 text-gray-300" />
                     </div>
 
-                    {/* 支架标记 */}
-                    {metadata_info?.is_scaffold_used && metadata_info?.scaffold_info && (
-                        <span className="inline-block text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full mb-1.5">
-                            📎 {metadata_info.scaffold_info.name}
-                        </span>
+                    {/* AI 介入/支架标记 */}
+                    {(metadata_info?.is_scaffold_used || metadata_info?.is_fallacy_intervention) && (
+                        <div className="mb-1.5 flex flex-wrap gap-1">
+                            {metadata_info?.is_scaffold_used && metadata_info?.scaffold_info && (
+                                <span className="inline-flex items-center text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
+                                    📎 {metadata_info.scaffold_info.name}
+                                </span>
+                            )}
+                            {metadata_info?.is_fallacy_intervention && (
+                                <span
+                                    className="inline-flex items-center gap-1 text-[10px] bg-rose-50 text-rose-700 border border-rose-100 px-1.5 py-0.5 rounded-full"
+                                    title={metadata_info.intervention_reason || 'AI 主动发现讨论中可能存在逻辑问题'}
+                                >
+                                    <AlertCircle className="w-3 h-3" />
+                                    {metadata_info.intervention_label || '主动逻辑纠偏'}
+                                </span>
+                            )}
+                        </div>
                     )}
 
                     {isAi ? (

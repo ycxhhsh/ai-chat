@@ -134,6 +134,7 @@ function Publish-Frontend {
     $distPath = "$ProjectRoot\frontend\dist"
     $indexPath = "$distPath\index.html"
     $assetsPath = "$distPath\assets"
+    $faviconPath = "$distPath\favicon.svg"
     if (-not (Test-Path $indexPath) -or -not (Test-Path $assetsPath)) {
         throw "frontend/dist is missing index.html or assets"
     }
@@ -149,8 +150,18 @@ function Publish-Frontend {
         Invoke-Checked "Uploading frontend index" {
             Copy-ToRemote $indexPath "/tmp/cothink_index_$Timestamp.html"
         }
+        if (Test-Path $faviconPath) {
+            Invoke-Checked "Uploading frontend favicon" {
+                Copy-ToRemote $faviconPath "/tmp/cothink_favicon_$Timestamp.svg"
+            }
+        }
         Invoke-Checked "Extracting frontend assets without deleting old hashes" {
             Invoke-Remote "mkdir -p $SERVER_PATH/frontend/dist && cd $SERVER_PATH/frontend/dist && tar -xzf /tmp/cothink_frontend_assets_$Timestamp.tar.gz"
+        }
+        if (Test-Path $faviconPath) {
+            Invoke-Checked "Publishing frontend favicon" {
+                Invoke-Remote "cp /tmp/cothink_favicon_$Timestamp.svg $SERVER_PATH/frontend/dist/favicon.svg"
+            }
         }
         Invoke-Checked "Swapping frontend index.html last" {
             Invoke-Remote "if [ -f $SERVER_PATH/frontend/dist/index.html ]; then cp $SERVER_PATH/frontend/dist/index.html $RollbackIndex; fi && cp /tmp/cothink_index_$Timestamp.html $SERVER_PATH/frontend/dist/index.html"

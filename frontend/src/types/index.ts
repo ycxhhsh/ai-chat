@@ -24,6 +24,11 @@ export interface ScaffoldInfo {
 export interface MessageMetadata {
     is_scaffold_used?: boolean;
     scaffold_info?: ScaffoldInfo;
+    is_fallacy_intervention?: boolean;
+    intervention_type?: 'fallacy' | string;
+    intervention_label?: string;
+    intervention_reason?: string;
+    llm_provider?: string;
     is_deep_thinking?: boolean;
     mentions?: string[];
 }
@@ -87,6 +92,25 @@ export interface Assignment {
     teacher_review: Record<string, unknown> | null;
     status: 'submitted' | 'ai_graded' | 'reviewed' | 'graded' | string;
     created_at: string;
+}
+
+export type CollaborationRoleName = '推进者' | '提问者' | '解释者' | '质疑者' | '总结者';
+
+export interface GroupRoleObjection {
+    id: string;
+    reason: string;
+    note: string | null;
+    status?: string;
+    created_at: string;
+}
+
+export interface GroupRoleInfo {
+    role: CollaborationRoleName | '';
+    description: string;
+    prompt: string;
+    assigned_by: 'system' | 'teacher' | string;
+    assigned_at: string | null;
+    pending_objection: GroupRoleObjection | null;
 }
 
 export interface AssignmentSelfReview {
@@ -202,9 +226,25 @@ export interface LLMProvider {
 
 export type MindMapNodeType = 'concept' | 'argument' | 'evidence' | 'question' | 'suggestion';
 
+export interface MindMapSourceStudent {
+    id: string;
+    name: string;
+    message_ids: string[];
+}
+
+export interface MindMapQualityHint {
+    id: 'missing_evidence' | 'open_question' | 'isolated' | 'missing_source';
+    label: string;
+    prompt: string;
+}
+
 export interface MindMapNodeData {
     label: string;
     nodeType: MindMapNodeType;
+    source_message_id?: string;
+    source_message_ids?: string[];
+    source_students?: MindMapSourceStudent[];
+    quality_hints?: MindMapQualityHint[];
     [key: string]: unknown;
 }
 
@@ -214,6 +254,9 @@ export interface MindMapNode {
     type: MindMapNodeType;
     position?: { x: number; y: number };
     data?: MindMapNodeData;
+    source_message_id?: string;
+    source_message_ids?: string[];
+    source_students?: MindMapSourceStudent[];
 }
 
 export interface MindMapEdge {
@@ -226,6 +269,7 @@ export interface MindMapEdge {
 export interface MindMapData {
     id: string;
     session_id: string;
+    map_key?: string;
     nodes: MindMapNode[];
     edges: MindMapEdge[];
     version: number;

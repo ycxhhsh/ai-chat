@@ -17,6 +17,7 @@ import { useScaffoldStore } from '../store/useScaffoldStore';
 import { useMindMapStore } from '../store/useMindMapStore';
 import type { ChatMessage } from '../types';
 import { generateUUID } from '../utils/uuid';
+import { shouldAppendStreamChunk } from './streamDedupe';
 
 // 心跳配置 — 增加容忍度以避免浏览器后台挂起导致的误判断连
 const HEARTBEAT_TIMEOUT = 120_000;
@@ -35,6 +36,8 @@ export function useWebSocket(sessionId: string | null) {
     // 游标：记录最后收到消息的时间戳，重连时只拉取增量
     const lastMsgTimestampRef = useRef<string | null>(null);
     const isReconnectRef = useRef(false);
+    const activeStreamTaskRef = useRef<string | null>(null);
+    const streamSeqRef = useRef<Record<string, number>>({});
     const { token } = useAuthStore();
 
     const {
@@ -51,7 +54,18 @@ export function useWebSocket(sessionId: string | null) {
     } = useChatStore();
 
     const { updateScaffoldState, setScaffolds, handleScaffoldDisabled } = useScaffoldStore();
-    const { setMindMapData, setIsGenerating, setDraft, addNode, removeNode, updateNode, addEdge, removeEdge } = useMindMapStore();
+    const {
+        setMindMapData,
+        setIsGenerating,
+        setDraft,
+        addNode,
+        removeNode,
+        updateNode,
+        updateNodePosition,
+        addEdge,
+        removeEdge,
+        updateEdgeLabel,
+    } = useMindMapStore();
 
     // 停止心跳检测
     const stopHeartbeat = useCallback(() => {
@@ -188,7 +202,16 @@ export function useWebSocket(sessionId: string | null) {
 
             case 'AI_STREAM_CHUNK':
                 setAiTyping(true);
-                if (data.chunk) appendAiStream(data.chunk as string);
+                if (
+                    data.chunk
+                    && shouldAppendStreamChunk(
+                        streamSeqRef.current,
+                        data.task_id,
+                        data.seq,
+                    )
+                ) {
+                    appendAiStream(data.chunk as string);
+                }
                 break;
 
             case 'AI_REPLY_DONE': {
@@ -217,10 +240,19 @@ export function useWebSocket(sessionId: string | null) {
 
             case 'AI_TYPING':
                 if (data.is_typing === false) {
+                    activeStreamTaskRef.current = null;
+                    streamSeqRef.current = {};
                     resetAiStream();
                 } else {
-                    // 新的 AI 回复开始 — 先清空旧流式内容，防止累积
-                    resetAiStream();
+                    const taskId = typeof data.task_id === 'string'
+                        ? data.task_id
+                        : null;
+                    // 新的 AI 回复开始时清空旧流式内容；重复的 typing 事件不重置当前流。
+                    if (!taskId || activeStreamTaskRef.current !== taskId) {
+                        activeStreamTaskRef.current = taskId;
+                        streamSeqRef.current = {};
+                        resetAiStream();
+                    }
                     setAiTyping(true);
                 }
                 break;
@@ -328,8 +360,10 @@ export function useWebSocket(sessionId: string | null) {
                     case 'add_node': addNode(payload as unknown as import('../types').MindMapNode); break;
                     case 'remove_node': removeNode(payload.id as string); break;
                     case 'update_node': updateNode(payload.id as string, payload); break;
+                    case 'update_node_position': updateNodePosition(payload.id as string, payload.position as { x: number; y: number }); break;
                     case 'add_edge': addEdge(payload as unknown as import('../types').MindMapEdge); break;
                     case 'remove_edge': removeEdge(payload.id as string); break;
+                    case 'update_edge': updateEdgeLabel(payload.id as string, String(payload.label || '')); break;
                 }
                 break;
             }

@@ -38,6 +38,7 @@ backend/.pytest_*.sqlite3
 tmp-cache/
 frontend/tmp-cache/
 frontend/.claude/
+.playwright-cli/
 backend/openapi.json
 error*.txt
 backend_*.txt
@@ -49,3 +50,26 @@ debug*.txt
 *_logs.txt
 *_out.txt
 *_out.json
+
+# Local one-off maintenance scripts / copied config snapshots
+apply_env.py
+backend_ai_worker.py
+check_logs.py
+deploy.py
+deploy_backend.py
+deploy_frontend.py
+fetch_logs.py
+fix_env.py
+get_logs.py
+manual_deploy.ps1
+query.sql
+reset_password.py
+backend/check_db*.py
+backend/default_nginx.conf
+backend/deploy.ps1
+backend/docker_compose.txt
+backend/nginx_confd.txt
+backend/parse_openapi.py
+backend/test_db.py
+backend/app/llm/prompts.md
+frontend/test.js

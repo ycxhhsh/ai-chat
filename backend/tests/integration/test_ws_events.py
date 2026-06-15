@@ -102,6 +102,49 @@ class TestChatSend:
         new_callable=AsyncMock,
     )
     @patch(
+        "app.websockets.handlers.chat._run_fallacy_detection",
+        new_callable=AsyncMock,
+    )
+    async def test_group_message_without_ai_mention_triggers_fallacy_scan(
+        self, mock_fallacy, mock_save,
+    ):
+        """小组消息无需 @AI 也应进入谬误巡检。"""
+        ws = FakeWebSocket()
+        mgr = FakeManager()
+        data = {"content": "用AI就一定能提分", "target_user": None}
+
+        await handle_chat_send(ws, "session-1", data, mgr)
+
+        assert mock_fallacy.called
+        args = mock_fallacy.call_args.args
+        assert args[0] == "session-1"
+        assert args[2] == "用AI就一定能提分"
+
+    @patch(
+        "app.websockets.handlers.chat._save_message_and_ack",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "app.websockets.handlers.chat._run_fallacy_detection",
+        new_callable=AsyncMock,
+    )
+    async def test_ai_private_message_skips_fallacy_scan(
+        self, mock_fallacy, mock_save,
+    ):
+        """AI 私聊本身已经请求 AI 回复，不额外做主动巡检。"""
+        ws = FakeWebSocket()
+        mgr = FakeManager()
+        data = {"content": "用AI就一定能提分", "target_user": "ai"}
+
+        await handle_chat_send(ws, "session-1", data, mgr)
+
+        assert not mock_fallacy.called
+
+    @patch(
+        "app.websockets.handlers.chat._save_message_and_ack",
+        new_callable=AsyncMock,
+    )
+    @patch(
         "app.websockets.handlers.chat._trigger_ai_reply",
         new_callable=AsyncMock,
     )

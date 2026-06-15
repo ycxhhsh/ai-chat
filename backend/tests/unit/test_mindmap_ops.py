@@ -10,10 +10,13 @@ os.environ.setdefault("DEEPSEEK_API_KEY", "test-key-not-real")
 import pytest  # noqa: E402
 
 from app.websockets.handlers.mindmap import (  # noqa: E402
+    _apply_mindmap_operation,
     _hard_truncate,
     _parse_tree_json,
     _tree_to_nodes_edges,
     _apply_tree_layout,
+    _attach_source_metadata,
+    _build_message_source_lookup,
 )
 
 
@@ -114,6 +117,58 @@ class TestTreeToNodesEdges:
         assert nodes[0]["label"].endswith("…")
         assert len(nodes[0]["label"]) <= 11
 
+    def test_preserves_source_metadata(self):
+        tree = {
+            "name": "方案",
+            "source_message_ids": ["m1"],
+            "source_students": [
+                {"id": "s1", "name": "小明", "message_ids": ["m1"]}
+            ],
+            "children": [],
+        }
+        nodes, _ = _tree_to_nodes_edges(tree)
+        assert nodes[0]["source_message_ids"] == ["m1"]
+        assert nodes[0]["source_students"][0]["name"] == "小明"
+
+
+class TestSourceMetadata:
+
+    def test_attach_source_metadata_filters_invalid_and_groups_students(self):
+        messages = [
+            {
+                "message_id": "m1",
+                "sender": {"id": "s1", "name": "小明", "role": "student"},
+            },
+            {
+                "message_id": "m2",
+                "sender": {"id": "s2", "name": "小红", "role": "student"},
+            },
+            {
+                "message_id": "m3",
+                "sender": {"id": "ai", "name": "AI", "role": "ai"},
+            },
+        ]
+        tree = {
+            "name": "观点",
+            "source_message_ids": ["m1", "m2", "missing", "m3"],
+            "children": [],
+        }
+        enriched = _attach_source_metadata(
+            tree,
+            _build_message_source_lookup(messages),
+        )
+        assert enriched["source_message_ids"] == ["m1", "m2", "m3"]
+        assert enriched["source_students"] == [
+            {"id": "s1", "name": "小明", "message_ids": ["m1"]},
+            {"id": "s2", "name": "小红", "message_ids": ["m2"]},
+        ]
+
+    def test_attach_source_metadata_ignores_nodes_without_valid_sources(self):
+        tree = {"name": "观点", "source_message_ids": ["missing"], "children": []}
+        enriched = _attach_source_metadata(tree, {})
+        assert "source_message_ids" not in enriched
+        assert "source_students" not in enriched
+
 
 class TestApplyTreeLayout:
 
@@ -157,3 +212,51 @@ class TestHardTruncate:
         for e in re_:
             assert e["source"] in valid_ids
             assert e["target"] in valid_ids
+
+
+class TestApplyMindmapOperation:
+
+    def test_add_node_to_empty_graph(self):
+        nodes, edges = _apply_mindmap_operation(
+            [], [], "add_node",
+            {"id": "n1", "label": "观点", "type": "argument"},
+        )
+        assert nodes == [{"id": "n1", "label": "观点", "type": "argument"}]
+        assert edges == []
+
+    def test_update_node_position(self):
+        nodes, _ = _apply_mindmap_operation(
+            [{"id": "n1", "label": "观点", "type": "argument"}],
+            [],
+            "update_node_position",
+            {"id": "n1", "position": {"x": 12, "y": 34}},
+        )
+        assert nodes[0]["position"] == {"x": 12, "y": 34}
+
+    def test_remove_node_cleans_edges(self):
+        nodes, edges = _apply_mindmap_operation(
+            [{"id": "n1"}, {"id": "n2"}],
+            [{"id": "e1", "source": "n1", "target": "n2"}],
+            "remove_node",
+            {"id": "n1"},
+        )
+        assert nodes == [{"id": "n2"}]
+        assert edges == []
+
+    def test_add_edge_dedupes_by_endpoints(self):
+        nodes, edges = _apply_mindmap_operation(
+            [{"id": "n1"}, {"id": "n2"}],
+            [{"id": "e1", "source": "n1", "target": "n2", "label": "包含"}],
+            "add_edge",
+            {"id": "e2", "source": "n1", "target": "n2", "label": "导致"},
+        )
+        assert len(edges) == 1
+
+    def test_update_edge_label(self):
+        _, edges = _apply_mindmap_operation(
+            [],
+            [{"id": "e1", "source": "n1", "target": "n2", "label": "包含"}],
+            "update_edge",
+            {"id": "e1", "label": "基于"},
+        )
+        assert edges[0]["label"] == "基于"

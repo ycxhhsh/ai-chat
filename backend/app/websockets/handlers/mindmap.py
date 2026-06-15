@@ -112,10 +112,16 @@ async def _generate_mindmap(
         if auto_trigger and len(messages) < 3:
             return
 
-        # 构建对话文本
+        ordered_messages = list(reversed(messages))
+
+        # 构建带来源 ID 的对话文本，便于 AI 为节点回填 source_message_ids。
         conversation_text = "\n".join(
-            f"[{m.sender.get('name', '未知')}]: {m.content}"
-            for m in reversed(messages)
+            (
+                f"[message_id={m.message_id}] "
+                f"[{m.sender.get('name', '未知')} / {m.sender.get('role', 'unknown')}]: "
+                f"{m.content}"
+            )
+            for m in ordered_messages
         )
         msg_count = len(messages)
         char_count = len(conversation_text)
@@ -177,6 +183,8 @@ async def _generate_mindmap(
                 {"is_generating": False},
             )
             return
+
+        tree = _attach_source_metadata(tree, _build_message_source_lookup(ordered_messages))
 
         # 转换为 React Flow 节点/边
         nodes, edges = _tree_to_nodes_edges(tree)
@@ -317,7 +325,15 @@ def _tree_to_nodes_edges(tree: dict) -> tuple[list[dict], list[dict]]:
         else:
             ntype = "evidence"      # 二级子 → 绿色
 
-        nodes.append({"id": nid, "label": label, "type": ntype})
+        source_message_ids = _normalize_source_ids(node.get("source_message_ids"))
+        source_students = node.get("source_students")
+        node_payload = {"id": nid, "label": label, "type": ntype}
+        if source_message_ids:
+            node_payload["source_message_ids"] = source_message_ids
+        if isinstance(source_students, list) and source_students:
+            node_payload["source_students"] = source_students
+
+        nodes.append(node_payload)
 
         if parent_id:
             rel = node.get("relationship", "")
@@ -335,6 +351,113 @@ def _tree_to_nodes_edges(tree: dict) -> tuple[list[dict], list[dict]]:
 
     _walk(tree, None, 0)
     return nodes, edges
+
+
+def _as_dict_or_attr(obj: Any, key: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _normalize_source_ids(raw: Any) -> list[str]:
+    """Normalize LLM/user-provided source id shapes into a unique string list."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        values = [raw]
+    elif isinstance(raw, list):
+        values = raw
+    else:
+        return []
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        sid = str(value).strip()
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        result.append(sid)
+    return result
+
+
+def _build_message_source_lookup(messages: list[Any]) -> dict[str, dict[str, Any]]:
+    """Build source metadata from Message rows or dict-like test fixtures."""
+    lookup: dict[str, dict[str, Any]] = {}
+    for msg in messages:
+        message_id = _as_dict_or_attr(msg, "message_id")
+        sender = _as_dict_or_attr(msg, "sender", {}) or {}
+        if not message_id:
+            continue
+        lookup[str(message_id)] = {
+            "message_id": str(message_id),
+            "student": {
+                "id": str(sender.get("id") or sender.get("user_id") or ""),
+                "name": str(sender.get("name") or "未知学生"),
+            } if sender.get("role") == "student" else None,
+        }
+    return lookup
+
+
+def _source_students_for_ids(
+    source_ids: list[str],
+    source_lookup: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_student: dict[str, dict[str, Any]] = {}
+    for message_id in source_ids:
+        info = source_lookup.get(message_id)
+        if not info or not info.get("student"):
+            continue
+        student = info["student"]
+        student_id = student.get("id") or student.get("name") or "unknown"
+        entry = by_student.setdefault(
+            student_id,
+            {
+                "id": student_id,
+                "name": student.get("name") or "未知学生",
+                "message_ids": [],
+            },
+        )
+        entry["message_ids"].append(message_id)
+    return list(by_student.values())
+
+
+def _attach_source_metadata(
+    tree: dict,
+    source_lookup: dict[str, dict[str, Any]],
+) -> dict:
+    """Validate source ids and attach student attribution to every tree node."""
+    valid_ids = set(source_lookup.keys())
+
+    def _walk(node: dict) -> dict:
+        copied = dict(node)
+        raw_ids = (
+            copied.get("source_message_ids")
+            or copied.get("source_message_id")
+            or copied.get("source_refs")
+            or copied.get("sources")
+        )
+        source_ids = [
+            sid for sid in _normalize_source_ids(raw_ids)
+            if sid in valid_ids
+        ]
+        if source_ids:
+            copied["source_message_ids"] = source_ids
+            source_students = _source_students_for_ids(source_ids, source_lookup)
+            if source_students:
+                copied["source_students"] = source_students
+        else:
+            copied.pop("source_message_ids", None)
+            copied.pop("source_students", None)
+
+        copied["children"] = [
+            _walk(child)
+            for child in copied.get("children", [])
+            if isinstance(child, dict)
+        ]
+        return copied
+
+    return _walk(tree)
 
 
 def _apply_tree_layout(
@@ -545,6 +668,71 @@ def _apply_operations(
     return nodes, edges
 
 
+def _apply_mindmap_operation(
+    nodes: list[dict],
+    edges: list[dict],
+    operation: str,
+    payload: dict,
+) -> tuple[list[dict], list[dict]]:
+    """Apply one user edit operation to persisted mindmap JSON."""
+    next_nodes = [dict(n) for n in nodes]
+    next_edges = [dict(e) for e in edges]
+
+    if operation == "add_node":
+        node_id = payload.get("id")
+        if node_id and not any(n.get("id") == node_id for n in next_nodes):
+            next_nodes.append(dict(payload))
+
+    elif operation == "remove_node":
+        node_id = payload.get("id")
+        next_nodes = [n for n in next_nodes if n.get("id") != node_id]
+        next_edges = [
+            e for e in next_edges
+            if e.get("source") != node_id and e.get("target") != node_id
+        ]
+
+    elif operation == "update_node":
+        node_id = payload.get("id")
+        for node in next_nodes:
+            if node.get("id") == node_id:
+                node.update({k: v for k, v in payload.items() if k != "id"})
+                break
+
+    elif operation == "update_node_position":
+        node_id = payload.get("id")
+        position = payload.get("position")
+        if isinstance(position, dict):
+            for node in next_nodes:
+                if node.get("id") == node_id:
+                    node["position"] = position
+                    break
+
+    elif operation == "add_edge":
+        edge_id = payload.get("id")
+        source = payload.get("source")
+        target = payload.get("target")
+        exists = any(
+            (edge_id and e.get("id") == edge_id)
+            or (e.get("source") == source and e.get("target") == target)
+            for e in next_edges
+        )
+        if source and target and not exists:
+            next_edges.append(dict(payload))
+
+    elif operation == "remove_edge":
+        edge_id = payload.get("id")
+        next_edges = [e for e in next_edges if e.get("id") != edge_id]
+
+    elif operation == "update_edge":
+        edge_id = payload.get("id")
+        for edge in next_edges:
+            if edge.get("id") == edge_id:
+                edge.update({k: v for k, v in payload.items() if k != "id"})
+                break
+
+    return next_nodes, next_edges
+
+
 async def handle_mindmap_edit(
     websocket: WebSocket,
     session_id: str,
@@ -557,7 +745,8 @@ async def handle_mindmap_edit(
         await manager.send_error(websocket, "Not authenticated")
         return
 
-    # 编辑操作类型：add_node, remove_node, update_node, add_edge, remove_edge
+    # 编辑操作类型：add_node, remove_node, update_node, update_node_position,
+    # add_edge, remove_edge, update_edge
     operation = data.get("operation")
     payload = data.get("payload", {})
     map_key = data.get("map_key") or f"session:{session_id}"
@@ -582,12 +771,22 @@ async def handle_mindmap_edit(
 
     # 异步更新数据库
     manager.track_task(
-        _update_mindmap_db(map_key, operation, payload)
+        _update_mindmap_db(
+            session_id,
+            map_key,
+            operation,
+            payload,
+            user_info["user_id"],
+        )
     )
 
 
 async def _update_mindmap_db(
-    map_key: str, operation: str, payload: dict
+    session_id: str,
+    map_key: str,
+    operation: str,
+    payload: dict,
+    user_id: str,
 ) -> None:
     """异步更新数据库中的思维导图数据。"""
     try:
@@ -604,35 +803,26 @@ async def _update_mindmap_db(
             )
             mindmap = result.scalar_one_or_none()
             if not mindmap:
-                return
+                mindmap = MindMap(
+                    id=str(uuid.uuid4()),
+                    session_id=session_id,
+                    map_key=map_key,
+                    nodes=[],
+                    edges=[],
+                    created_by=user_id,
+                )
+                db.add(mindmap)
 
             nodes = list(mindmap.nodes)
             edges = list(mindmap.edges)
 
-            if operation == "add_node":
-                nodes.append(payload)
-            elif operation == "remove_node":
-                node_id = payload.get("id")
-                nodes = [n for n in nodes if n["id"] != node_id]
-                edges = [
-                    e for e in edges
-                    if e["source"] != node_id and e["target"] != node_id
-                ]
-            elif operation == "update_node":
-                node_id = payload.get("id")
-                for n in nodes:
-                    if n["id"] == node_id:
-                        n.update(payload)
-                        break
-            elif operation == "add_edge":
-                edges.append(payload)
-            elif operation == "remove_edge":
-                edge_id = payload.get("id")
-                edges = [e for e in edges if e["id"] != edge_id]
+            nodes, edges = _apply_mindmap_operation(
+                nodes, edges, operation, payload,
+            )
 
             mindmap.nodes = nodes
             mindmap.edges = edges
-            mindmap.version += 1
+            mindmap.version = (mindmap.version or 0) + 1
             await db.commit()
     except Exception as e:
         logger.error("Mindmap DB update failed: %s", e)
@@ -661,18 +851,35 @@ async def handle_mindmap_accept_draft(
     try:
         from app.db.session import AsyncSessionLocal
         from app.models.mindmap import MindMap
+        from sqlalchemy import select
 
         map_id = str(uuid.uuid4())
+        version = 1
         async with AsyncSessionLocal() as db:
-            mindmap = MindMap(
-                id=map_id,
-                session_id=session_id,
-                map_key=map_key,
-                nodes=nodes,
-                edges=edges,
-                created_by=user_info["user_id"],
+            result = await db.execute(
+                select(MindMap)
+                .where(MindMap.map_key == map_key)
+                .order_by(MindMap.updated_at.desc())
+                .limit(1)
             )
-            db.add(mindmap)
+            mindmap = result.scalar_one_or_none()
+            if mindmap:
+                map_id = mindmap.id
+                mindmap.nodes = nodes
+                mindmap.edges = edges
+                mindmap.version = (mindmap.version or 0) + 1
+                version = mindmap.version
+            else:
+                mindmap = MindMap(
+                    id=map_id,
+                    session_id=session_id,
+                    map_key=map_key,
+                    nodes=nodes,
+                    edges=edges,
+                    created_by=user_info["user_id"],
+                )
+                db.add(mindmap)
+                version = 1
             await db.commit()
 
         # 广播正式数据给所有人
@@ -685,7 +892,7 @@ async def handle_mindmap_accept_draft(
                 "map_key": map_key,
                 "nodes": nodes,
                 "edges": edges,
-                "version": 1,
+                "version": version,
             },
         )
         logger.info(

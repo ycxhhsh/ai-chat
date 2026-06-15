@@ -145,14 +145,17 @@ async def execute_ai_task(
                 logger.warning("Web search step failed: %s", e)
 
         # 流式调用 LLM
+        stream_seq = 0
         try:
             async with asyncio.timeout(settings.llm_stream_timeout_s):
                 async for chunk in client.stream_chat(messages=messages):
+                    stream_seq += 1
                     full_content += chunk
                     await publish_event("AI_STREAM_CHUNK", {
                         "chunk": chunk,
                         "provider": llm_provider,
                         "task_id": task_id,
+                        "seq": stream_seq,
                     })
         except TimeoutError:
             logger.error(

@@ -125,8 +125,8 @@ async def handle_chat_send(
         )
     )
 
-    # P1-7: 小组消息异步谬误检测（AI 私聊不检测）
-    if target_user != "ai" and len(content) >= 20:
+    # P1-7: 小组消息异步谬误检测（AI 私聊不检测；无需 @AI）
+    if target_user != "ai":
         manager.track_task(
             _run_fallacy_detection(
                 session_id, user_info, content, manager, llm_provider,

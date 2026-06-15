@@ -34,6 +34,7 @@ function toFlowNode(n: MindMapNode & { source_message_id?: string; source_messag
             label: n.label,
             nodeType: n.type,
             ...(ids.length > 0 ? { source_message_ids: ids } : {}),
+            ...(n.source_students?.length ? { source_students: n.source_students } : {}),
         },
     };
     if (n.type === 'suggestion') {
@@ -48,11 +49,18 @@ function toFlowNode(n: MindMapNode & { source_message_id?: string; source_messag
 
 /** 草稿节点：半透明虚线样式 */
 function toDraftFlowNode(n: MindMapNode): FlowNode {
+    const ids: string[] = n.source_message_ids
+        ?? (n.source_message_id ? [n.source_message_id] : []);
     return {
         id: `draft_${n.id}`,
         type: 'mindMapNode',
         position: n.position ?? { x: 0, y: 0 },
-        data: { label: n.label, nodeType: n.type },
+        data: {
+            label: n.label,
+            nodeType: n.type,
+            ...(ids.length > 0 ? { source_message_ids: ids } : {}),
+            ...(n.source_students?.length ? { source_students: n.source_students } : {}),
+        },
         style: { opacity: 0.5, border: '2px dashed #a78bfa' },
         draggable: false,
         selectable: false,
@@ -87,6 +95,26 @@ function toFlowEdge(e: MindMapEdge): FlowEdge {
     };
 }
 
+function toRawNode(n: FlowNode): MindMapNode {
+    return {
+        id: n.id,
+        label: n.data.label,
+        type: n.data.nodeType,
+        position: n.position,
+        ...(n.data.source_message_ids ? { source_message_ids: n.data.source_message_ids } : {}),
+        ...(n.data.source_students ? { source_students: n.data.source_students } : {}),
+    };
+}
+
+function toRawEdge(e: FlowEdge): MindMapEdge {
+    return {
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        label: String(e.label || ''),
+    };
+}
+
 // ── Store ──
 
 interface MindMapState {
@@ -118,6 +146,7 @@ interface MindMapState {
     addNode: (node: MindMapNode & { source_message_id?: string; source_message_ids?: string[] }) => void;
     removeNode: (nodeId: string) => void;
     updateNode: (nodeId: string, updates: Partial<MindMapNode>) => void;
+    updateNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
     addEdge: (edge: MindMapEdge) => void;
     removeEdge: (edgeId: string) => void;
     updateEdgeLabel: (edgeId: string, label: string) => void;
@@ -154,11 +183,25 @@ export const useMindMapStore = create<MindMapState>()((set, get) => ({
     mapCache: new Map(),
 
     setMindMapData: (data) =>
-        set({
-            nodes: data.nodes.map(toFlowNode),
-            edges: data.edges.map(toFlowEdge),
-            currentMapId: data.id,
-            version: data.version,
+        set((s) => {
+            const flowNodes = data.nodes.map(toFlowNode);
+            const flowEdges = data.edges.map(toFlowEdge);
+            const mapKey = data.map_key || s.currentMapKey;
+            if (mapKey) {
+                s.mapCache.set(mapKey, {
+                    nodes: flowNodes,
+                    edges: flowEdges,
+                    mapId: data.id,
+                    version: data.version,
+                });
+            }
+            return {
+                nodes: flowNodes,
+                edges: flowEdges,
+                currentMapId: data.id,
+                currentMapKey: mapKey,
+                version: data.version,
+            };
         }),
 
     onNodesChange: (changes) =>
@@ -184,6 +227,9 @@ export const useMindMapStore = create<MindMapState>()((set, get) => ({
                 n.id === nodeId
                     ? {
                         ...n,
+                        ...(updates.position !== undefined
+                            ? { position: updates.position }
+                            : {}),
                         data: {
                             ...n.data,
                             ...(updates.label !== undefined
@@ -192,9 +238,22 @@ export const useMindMapStore = create<MindMapState>()((set, get) => ({
                             ...(updates.type !== undefined
                                 ? { nodeType: updates.type }
                                 : {}),
+                            ...(updates.source_message_ids !== undefined
+                                ? { source_message_ids: updates.source_message_ids }
+                                : {}),
+                            ...(updates.source_students !== undefined
+                                ? { source_students: updates.source_students }
+                                : {}),
                         },
                     }
                     : n
+            ),
+        })),
+
+    updateNodePosition: (nodeId, position) =>
+        set((s) => ({
+            nodes: s.nodes.map((n) =>
+                n.id === nodeId ? { ...n, position } : n
             ),
         })),
 
@@ -227,25 +286,52 @@ export const useMindMapStore = create<MindMapState>()((set, get) => ({
 
     /** 采纳草稿 → 合入主文档（返回原始数据供 WS 发送） */
     acceptDraft: () => {
-        const { draftRawNodes, draftRawEdges } = get();
-        const rawNodes = [...draftRawNodes];
-        const rawEdges = [...draftRawEdges];
+        const { nodes, edges, draftRawNodes, draftRawEdges } = get();
+        const existingNodeIds = new Set(nodes.map((n) => n.id));
+        const existingEdgeIds = new Set(edges.map((e) => e.id));
+        const idMap = new Map<string, string>();
+        const stamp = Date.now();
+        const safeDraftNodes = draftRawNodes.map((node, idx) => {
+            const nextId = node.id && !existingNodeIds.has(node.id)
+                ? node.id
+                : `n-${stamp}-${idx}`;
+            existingNodeIds.add(nextId);
+            idMap.set(node.id, nextId);
+            return { ...node, id: nextId };
+        });
+        const safeDraftEdges = draftRawEdges
+            .map((edge, idx) => {
+                const source = idMap.get(edge.source) || edge.source;
+                const target = idMap.get(edge.target) || edge.target;
+                if (!existingNodeIds.has(source) || !existingNodeIds.has(target)) {
+                    return null;
+                }
+                const nextId = edge.id && !existingEdgeIds.has(edge.id)
+                    ? edge.id
+                    : `e-${stamp}-${idx}`;
+                existingEdgeIds.add(nextId);
+                return { ...edge, id: nextId, source, target };
+            })
+            .filter((edge): edge is MindMapEdge => edge !== null);
+        const mergedNodes = [...nodes, ...safeDraftNodes.map(toFlowNode)];
+        const mergedEdges = [...edges, ...safeDraftEdges.map(toFlowEdge)];
+        const rawNodes = mergedNodes.map(toRawNode);
+        const rawEdges = mergedEdges.map(toRawEdge);
 
         set((s) => {
             // Sprint 5: 采纳后同步更新 mapCache
-            const newNodes = [...s.nodes, ...draftRawNodes.map(toFlowNode)];
-            const newEdges = [...s.edges, ...draftRawEdges.map(toFlowEdge)];
             if (s.currentMapKey) {
                 s.mapCache.set(s.currentMapKey, {
-                    nodes: newNodes,
-                    edges: newEdges,
+                    nodes: mergedNodes,
+                    edges: mergedEdges,
                     mapId: s.currentMapId,
-                    version: s.version,
+                    version: s.version + 1,
                 });
             }
             return {
-                nodes: newNodes,
-                edges: newEdges,
+                nodes: mergedNodes,
+                edges: mergedEdges,
+                version: s.version + 1,
                 draftNodes: [],
                 draftEdges: [],
                 draftRawNodes: [],
