@@ -15,6 +15,7 @@ import { useGroupStore } from '../store/useGroupStore';
 import { useChatStore } from '../store/useChatStore';
 import { useScaffoldStore } from '../store/useScaffoldStore';
 import { useMindMapStore } from '../store/useMindMapStore';
+import { useAsyncTaskStore, type AsyncTaskType } from '../store/useAsyncTaskStore';
 import type { ChatMessage } from '../types';
 import { generateUUID } from '../utils/uuid';
 import { shouldAppendStreamChunk } from './streamDedupe';
@@ -25,6 +26,28 @@ const HEARTBEAT_TIMEOUT = 120_000;
 // 重连配置 — 首次重连 500ms，减少感知延迟
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 15_000;
+
+function claimLatestAsyncTask(type: AsyncTaskType, nextTaskId?: unknown) {
+    if (typeof nextTaskId !== 'string' || !nextTaskId) return null;
+    const store = useAsyncTaskStore.getState();
+    if (store.tasks[nextTaskId]) return nextTaskId;
+
+    const latest = Object.values(store.tasks)
+        .filter((task) =>
+            task.type === type
+            && task.source === 'websocket'
+            && task.taskId !== nextTaskId
+            && (task.status === 'queued' || task.status === 'running' || task.status === 'streaming')
+        )
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+
+    if (latest) {
+        store.replaceTaskId(latest.taskId, nextTaskId);
+        return nextTaskId;
+    }
+
+    return null;
+}
 
 export function useWebSocket(sessionId: string | null) {
     const wsRef = useRef<WebSocket | null>(null);
@@ -105,6 +128,7 @@ export function useWebSocket(sessionId: string | null) {
     }, [stopHeartbeat, resetHeartbeatTimeout]);
 
     const handleEvent = useCallback((eventName: string, data: Record<string, unknown>) => {
+        const asyncTasks = useAsyncTaskStore.getState();
         // 收到任何事件都说明连接存活，可重置超时
         resetHeartbeatTimeout();
 
@@ -182,6 +206,9 @@ export function useWebSocket(sessionId: string | null) {
                     const msgSessionId = msg.session_id || sessionId || '';
                     addGroupMessage(msgSessionId, msg);
                 }
+                if (msg.sender?.role === 'ai' && activeStreamTaskRef.current) {
+                    asyncTasks.completeTask(activeStreamTaskRef.current);
+                }
                 break;
             }
 
@@ -201,6 +228,18 @@ export function useWebSocket(sessionId: string | null) {
             }
 
             case 'AI_STREAM_CHUNK':
+                if (data.task_id) {
+                    const taskId = claimLatestAsyncTask('ai_chat', data.task_id);
+                    if (taskId) {
+                        const existing = useAsyncTaskStore.getState().tasks[taskId];
+                        useAsyncTaskStore.getState().updateTask(taskId, {
+                            status: 'streaming',
+                            progressText: existing?.progressText === '已找到资料，正在整合资料'
+                                ? existing.progressText
+                                : '正在生成回复',
+                        });
+                    }
+                }
                 setAiTyping(true);
                 if (
                     data.chunk
@@ -215,6 +254,12 @@ export function useWebSocket(sessionId: string | null) {
                 break;
 
             case 'AI_REPLY_DONE': {
+                if (data.task_id) {
+                    const taskId = claimLatestAsyncTask('ai_chat', data.task_id);
+                    if (taskId) {
+                        useAsyncTaskStore.getState().completeTask(taskId);
+                    }
+                }
                 // 防御性处理：正常情况下后端会拦截此事件并转为 CHAT_MESSAGE，
                 // 但若意外到达前端，需手动构造最终消息以免流式内容丢失
                 const doneMsg: ChatMessage = {
@@ -247,6 +292,16 @@ export function useWebSocket(sessionId: string | null) {
                     const taskId = typeof data.task_id === 'string'
                         ? data.task_id
                         : null;
+                    const taskType: AsyncTaskType = data.provider === 'drawing' ? 'drawing' : 'ai_chat';
+                    const claimedTaskId = claimLatestAsyncTask(taskType, taskId);
+                    if (claimedTaskId) {
+                        const existing = useAsyncTaskStore.getState().tasks[claimedTaskId];
+                        useAsyncTaskStore.getState().updateTask(claimedTaskId, {
+                            status: taskType === 'drawing' ? 'running' : 'streaming',
+                            progressText: existing?.progressText
+                                || (taskType === 'drawing' ? '正在生成设计草图' : '正在生成回复'),
+                        });
+                    }
                     // 新的 AI 回复开始时清空旧流式内容；重复的 typing 事件不重置当前流。
                     if (!taskId || activeStreamTaskRef.current !== taskId) {
                         activeStreamTaskRef.current = taskId;
@@ -284,6 +339,15 @@ export function useWebSocket(sessionId: string | null) {
 
             case 'WEB_SEARCH_RESULT':
                 // P3: 搜索来源展示
+                if (data.task_id) {
+                    const taskId = claimLatestAsyncTask('ai_chat', data.task_id);
+                    if (taskId) {
+                        useAsyncTaskStore.getState().updateTask(taskId, {
+                            status: 'streaming',
+                            progressText: '已找到资料，正在整合资料',
+                        });
+                    }
+                }
                 if (data.sources) {
                     setSearchSources(data.sources as { title: string; url: string; content: string }[]);
                 }
@@ -303,7 +367,13 @@ export function useWebSocket(sessionId: string | null) {
             }
 
             case 'DRAWING_DONE': {
-                // 绘图任务完成 — 插入草图
+                if (data.task_id) {
+                    const taskId = claimLatestAsyncTask('drawing', data.task_id);
+                    if (taskId) {
+                        useAsyncTaskStore.getState().completeTask(taskId);
+                    }
+                }
+                // 绘图任务完成 - 插入草图
                 const drawingContent = data.content as string;
                 if (drawingContent) {
                     const drawingSessionId = (data.session_id as string) || sessionId || '';
@@ -391,6 +461,33 @@ export function useWebSocket(sessionId: string | null) {
 
             case 'ERROR':
                 console.error('[WS] Server error:', data);
+                if (data.task_id) {
+                    const taskType: AsyncTaskType =
+                        data.code === 'DRAWING_ERROR' || data.code === 'DRAWING_PREPARE_ERROR'
+                            ? 'drawing'
+                            : 'ai_chat';
+                    const taskId = claimLatestAsyncTask(taskType, data.task_id);
+                    if (taskId) {
+                        useAsyncTaskStore.getState().failTask(
+                            taskId,
+                            (data.message as string) || 'AI 任务失败，请稍后重试',
+                        );
+                    }
+                } else if (data.code === 'DRAWING_ERROR' || data.code === 'DRAWING_PREPARE_ERROR' || data.code === 'AI_ERROR') {
+                    const fallbackType: AsyncTaskType = data.code === 'AI_ERROR' ? 'ai_chat' : 'drawing';
+                    const latestTask = Object.values(useAsyncTaskStore.getState().tasks)
+                        .filter((task) =>
+                            task.type === fallbackType
+                            && (task.status === 'queued' || task.status === 'running' || task.status === 'streaming')
+                        )
+                        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+                    if (latestTask) {
+                        useAsyncTaskStore.getState().failTask(
+                            latestTask.taskId,
+                            (data.message as string) || (fallbackType === 'drawing' ? '设计草图生成失败' : 'AI 任务失败，请稍后重试'),
+                        );
+                    }
+                }
                 if (typeof data === 'object' && data && 'message' in data) {
                     // 非阻塞提示，避免 alert 阻塞 WS 事件循环导致连接断开
                     const errMsg = (data as { message: string }).message;

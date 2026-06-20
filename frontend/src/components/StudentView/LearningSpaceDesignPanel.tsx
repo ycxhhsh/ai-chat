@@ -1,7 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../api';
 import { useGroupStore } from '../../store/useGroupStore';
 import { useChatStore } from '../../store/useChatStore';
+import { useAsyncTaskStore } from '../../store/useAsyncTaskStore';
+import { generateUUID } from '../../utils/uuid';
 import type {
     LearningSpaceAccelerationCheck,
     LearningSpaceEntry,
@@ -50,6 +52,10 @@ const TEXT_STEPS: LearningSpaceStepKey[] = ['self_think', 'verify', 'integrate']
 export const LearningSpaceDesignPanel: React.FC = () => {
     const { currentGroupId } = useGroupStore();
     const { selectedProvider } = useChatStore();
+    const startTask = useAsyncTaskStore((state) => state.startTask);
+    const completeTask = useAsyncTaskStore((state) => state.completeTask);
+    const failTask = useAsyncTaskStore((state) => state.failTask);
+    const asyncTasks = useAsyncTaskStore((state) => state.tasks);
     const [items, setItems] = useState<LearningSpaceStudentQuestionItem[]>([]);
     const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
     const [payload, setPayload] = useState<LearningSpaceSessionPayload | null>(null);
@@ -70,7 +76,7 @@ export const LearningSpaceDesignPanel: React.FC = () => {
         }
     };
 
-    const loadSession = async (sessionId: string) => {
+    const loadSession = useCallback(async (sessionId: string) => {
         setLoading(true);
         try {
             const data = await api.learningSpaceDesign.getSession(sessionId);
@@ -84,7 +90,7 @@ export const LearningSpaceDesignPanel: React.FC = () => {
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
     useEffect(() => {
         loadQuestions().catch((error) => console.error('Load learning space design questions failed:', error));
@@ -94,7 +100,7 @@ export const LearningSpaceDesignPanel: React.FC = () => {
         if (selectedSessionId) {
             loadSession(selectedSessionId).catch((error) => console.error('Load learning space session failed:', error));
         }
-    }, [selectedSessionId]);
+    }, [selectedSessionId, loadSession]);
 
     const groupedItems = useMemo(() => {
         return STAGE_ORDER.map((stageName) => ({
@@ -164,20 +170,53 @@ export const LearningSpaceDesignPanel: React.FC = () => {
         }
     };
 
-    const handleSendAi = async () => {
-        if (!payload || !currentStep || !chatDraft.trim()) return;
+    const handleSendAi = async (contentOverride?: string, providerOverride?: string) => {
+        const content = (contentOverride ?? chatDraft).trim();
+        if (!payload || !currentStep || !content) return;
+        const taskId = generateUUID();
+        const provider = providerOverride || selectedProvider;
         setSaving(true);
         setNotice('');
+        startTask({
+            taskId,
+            type: 'learning_space_ai',
+            title: 'AI 正在回应本步骤',
+            status: 'running',
+            progressText: 'AI 正在回应本步骤',
+            retryable: true,
+            retryPayload: {
+                kind: 'learning_space_ai',
+                sessionId: payload.session.id,
+                stepKey: currentStep,
+                content,
+                provider,
+            },
+            source: 'http',
+            relatedId: payload.session.id,
+        });
         try {
-            await api.learningSpaceDesign.sendAiMessage(payload.session.id, currentStep, chatDraft, selectedProvider);
+            await api.learningSpaceDesign.sendAiMessage(payload.session.id, currentStep, content, provider);
+            completeTask(taskId);
             setChatDraft('');
             await loadSession(payload.session.id);
         } catch (error: any) {
+            failTask(taskId, error?.response?.data?.detail || 'AI 回应失败，请稍后重试');
             setNotice(error?.response?.data?.detail || '发送失败，请稍后重试');
         } finally {
             setSaving(false);
         }
     };
+
+    useEffect(() => {
+        const handler = (event: Event) => {
+            const detail = (event as CustomEvent<{ sessionId?: string }>).detail;
+            if (detail?.sessionId && detail.sessionId === payload?.session.id) {
+                loadSession(detail.sessionId).catch((error) => console.error('Reload learning space session failed:', error));
+            }
+        };
+        window.addEventListener('learning-space-ai-completed', handler);
+        return () => window.removeEventListener('learning-space-ai-completed', handler);
+    }, [payload?.session.id, loadSession]);
 
     const handleSubmitStep = async () => {
         if (!payload || !currentStep) return;
@@ -248,6 +287,15 @@ export const LearningSpaceDesignPanel: React.FC = () => {
     };
 
     const currentCompletion = payload?.step_completion?.find((item) => item.step_key === currentStep);
+    const currentAsyncTask = payload
+        ? Object.values(asyncTasks)
+            .filter((task) =>
+                task.type === 'learning_space_ai'
+                && task.relatedId === payload.session.id
+                && (task.status === 'running' || task.status === 'failed')
+            )
+            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
+        : null;
     const textCount = compactLength(textDraft);
     const minWords = currentCompletion?.min_words || (currentStep ? minWordsForStep(payload, currentStep) : 0);
     const roundLimit = payload?.question.ai_round_limit || 0;
@@ -433,6 +481,32 @@ export const LearningSpaceDesignPanel: React.FC = () => {
                                             {roundRemaining > 0 ? `还可发送 ${roundRemaining} 轮` : '已达到轮数上限'}
                                         </span>
                                     </div>
+                                    {currentAsyncTask && (
+                                        <div className={`rounded-lg px-3 py-2 text-sm ${
+                                            currentAsyncTask.status === 'failed'
+                                                ? 'bg-red-50 text-red-700 border border-red-100'
+                                                : 'bg-blue-50 text-blue-700 border border-blue-100'
+                                        }`}>
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <span>
+                                                    {currentAsyncTask.status === 'failed'
+                                                        ? currentAsyncTask.errorMessage || 'AI 回应失败，请稍后重试'
+                                                        : currentAsyncTask.progressText || 'AI 正在回应本步骤'}
+                                                </span>
+                                                {currentAsyncTask.status === 'failed' && currentAsyncTask.retryable && (
+                                                    <button
+                                                        onClick={() => {
+                                                            const retryPayload = currentAsyncTask.retryPayload as { content?: string; provider?: string } | undefined;
+                                                            handleSendAi(retryPayload?.content || chatDraft, retryPayload?.provider);
+                                                        }}
+                                                        className="px-2 py-1 text-xs text-red-700 bg-white border border-red-200 rounded-md hover:bg-red-100"
+                                                    >
+                                                        重试
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
                                     <div className="space-y-3">
                                         {currentMessages.length === 0 && (
                                             <div className="text-sm text-gray-400">还没有开始本步骤的 AI 对话</div>
@@ -467,7 +541,7 @@ export const LearningSpaceDesignPanel: React.FC = () => {
                                         />
                                         <div className="flex flex-col gap-2">
                                             <button
-                                                onClick={handleSendAi}
+                                                onClick={() => handleSendAi()}
                                                 disabled={saving || !chatDraft.trim() || roundRemaining <= 0}
                                                 className="px-4 py-2 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-800 disabled:opacity-50"
                                             >

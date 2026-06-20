@@ -16,6 +16,8 @@ import { generateUUID } from '../../utils/uuid';
 import { PanelRight, PanelRightClose, Menu, MessageSquare as ChatIcon, GitBranch, Search } from 'lucide-react';
 import type { ChatMessage, GroupRoleInfo } from '../../types';
 import { NotificationBell } from '../NotificationBell';
+import { AsyncTaskPopover } from '../AsyncTaskPopover';
+import { useAsyncTaskStore, type AsyncTask } from '../../store/useAsyncTaskStore';
 
 const MindMapPanel = React.lazy(() => import('../MindMap/MindMapPanel').then(mod => ({ default: mod.MindMapPanel })));
 const AssignmentPanel = React.lazy(() => import('./AssignmentPanel').then(mod => ({ default: mod.AssignmentPanel })));
@@ -67,6 +69,7 @@ export const StudentView: React.FC = () => {
     const [isDrawingPromptLoading, setIsDrawingPromptLoading] = useState(false);
     const [drawingPrompt, setDrawingPrompt] = useState('');
     const lastClickTimeRef = useRef<number>(0);
+    const { startTask, completeTask, failTask, dismissTask } = useAsyncTaskStore();
 
     const { user } = useAuthStore();
     const { groups, currentGroupId } = useGroupStore();
@@ -112,7 +115,7 @@ export const StudentView: React.FC = () => {
         setAiMessages,
         selectedProvider,
     } = useChatStore();
-    const { scaffolds, fetchScaffolds } = useScaffoldStore();
+    const { fetchScaffolds } = useScaffoldStore();
     const {
         currentConversationId,
         createConversation,
@@ -208,6 +211,10 @@ export const StudentView: React.FC = () => {
             const scaffoldInfo = metadata?.scaffold_info || null;
             const isScaffoldUsed = metadata?.is_scaffold_used || false;
             const requestId = (metadata?.request_id as string) || generateUUID();
+            const retryMetadata: Record<string, unknown> = { ...(metadata || {}) };
+            delete retryMetadata.request_id;
+            const expectsAiReply = activeChannel === 'ai'
+                || mentions.some((mention) => mention.toLowerCase().includes('ai'));
 
             // 构造本地乐观消息
             const optimisticMsg: ChatMessage = {
@@ -241,6 +248,24 @@ export const StudentView: React.FC = () => {
                 addGroupMessage(sessionId || '', optimisticMsg);
             }
 
+            if (expectsAiReply) {
+                startTask({
+                    taskId: requestId,
+                    type: 'ai_chat',
+                    title: 'AI 正在回复',
+                    status: metadata?.enable_search ? 'running' : 'queued',
+                    progressText: metadata?.enable_search ? '正在联网检索' : '正在生成回复',
+                    retryable: true,
+                    retryPayload: {
+                        kind: 'ai_chat',
+                        content,
+                        metadata: retryMetadata,
+                    },
+                    source: 'websocket',
+                    relatedId: activeChannel === 'ai' ? convId || undefined : sessionId || undefined,
+                });
+            }
+
             send('CHAT_SEND', {
                 content,
                 target_user: activeChannel === 'ai' ? 'ai' : null,
@@ -259,7 +284,7 @@ export const StudentView: React.FC = () => {
                 enable_search: !!metadata?.enable_search,
             });
         },
-        [send, activeChannel, selectedProvider, scaffolds, sessionId, user, addGroupMessage, addAiMessage, currentConversationId]
+        [send, activeChannel, selectedProvider, sessionId, user, addGroupMessage, addAiMessage, currentConversationId, createConversation, currentGroupId, startTask]
     );
 
     // 生成思维导图
@@ -273,9 +298,24 @@ export const StudentView: React.FC = () => {
         if (!targetSessionId) return;
 
         if (typeof customPrompt === 'string') {
-           send('DESIGN_DRAWING', { api_provider: 'aliyun', custom_prompt: customPrompt, session_id: targetSessionId });
-           setIsDrawingDialogOpen(false);
-           return;
+            const taskId = generateUUID();
+            startTask({
+                taskId,
+                type: 'drawing',
+                title: '正在生成设计草图',
+                status: 'running',
+                progressText: '正在生成设计草图',
+                retryable: true,
+                retryPayload: {
+                    kind: 'drawing',
+                    prompt: customPrompt,
+                },
+                source: 'websocket',
+                relatedId: targetSessionId,
+            });
+            send('DESIGN_DRAWING', { api_provider: 'aliyun', custom_prompt: customPrompt, session_id: targetSessionId });
+            setIsDrawingDialogOpen(false);
+            return;
         }
 
         const now = Date.now();
@@ -290,7 +330,60 @@ export const StudentView: React.FC = () => {
         setDrawingPrompt('');
 
         send('PREPARE_DRAWING', { llm_provider: 'deepseek', session_id: targetSessionId });
-    }, [send, currentGroupId, activeChannel, currentConversationId]);
+    }, [send, currentGroupId, activeChannel, currentConversationId, startTask]);
+
+    const handleRetryAsyncTask = useCallback((task: AsyncTask) => {
+        const payload = task.retryPayload as {
+            kind?: string;
+            content?: string;
+            metadata?: Record<string, unknown>;
+            prompt?: string;
+            sessionId?: string;
+            stepKey?: string;
+            provider?: string;
+        } | undefined;
+        dismissTask(task.taskId);
+        if (payload?.kind === 'ai_chat' && payload.content) {
+            handleSend(payload.content, payload.metadata || {});
+            return;
+        }
+        if (payload?.kind === 'drawing' && payload.prompt) {
+            handleRequestDrawing(payload.prompt);
+            return;
+        }
+        if (payload?.kind === 'learning_space_ai' && payload.sessionId && payload.stepKey && payload.content) {
+            const retryTaskId = generateUUID();
+            startTask({
+                taskId: retryTaskId,
+                type: 'learning_space_ai',
+                title: 'AI 正在回应本步骤',
+                status: 'running',
+                progressText: 'AI 正在回应本步骤',
+                retryable: true,
+                retryPayload: payload,
+                source: 'http',
+                relatedId: payload.sessionId,
+            });
+            api.learningSpaceDesign.sendAiMessage(
+                payload.sessionId,
+                payload.stepKey,
+                payload.content,
+                payload.provider,
+            )
+                .then(() => {
+                    completeTask(retryTaskId);
+                    window.dispatchEvent(new CustomEvent('learning-space-ai-completed', {
+                        detail: { sessionId: payload.sessionId },
+                    }));
+                })
+                .catch((error: any) => {
+                    failTask(
+                        retryTaskId,
+                        error?.response?.data?.detail || 'AI 回应失败，请稍后重试',
+                    );
+                });
+        }
+    }, [completeTask, dismissTask, failTask, handleRequestDrawing, handleSend, startTask]);
 
     // 思维导图编辑同步
     const handleMindMapEditSync = useCallback(
@@ -480,6 +573,7 @@ export const StudentView: React.FC = () => {
                             </button>
                         )}
                         {/* P3: 通知铃铛 + DeepSearch 按钮 */}
+                        <AsyncTaskPopover onRetry={handleRetryAsyncTask} />
                         <NotificationBell />
                         <button
                             onClick={() => setDeepSearchOpen(true)}
