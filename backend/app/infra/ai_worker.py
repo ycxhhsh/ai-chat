@@ -34,6 +34,10 @@ async def execute_ai_task(
     """
     from app.core.config import get_settings
     from app.llm.factory import get_llm_client
+    from app.services.ai_reply_delivery import (
+        build_ai_message,
+        persist_ai_message,
+    )
 
     task_id = task["task_id"]
     session_id = task["session_id"]
@@ -174,10 +178,22 @@ async def execute_ai_task(
                 return
 
         # 发布完成事件（含完整内容，用于落库）
+        ai_message = build_ai_message(
+            message_id=task_id,
+            session_id=session_id,
+            content=full_content,
+            llm_provider=llm_provider,
+            user_info=user_info,
+            is_private=is_private,
+            conversation_id=conversation_id,
+        )
+        await persist_ai_message(ai_message)
         await publish_event("AI_REPLY_DONE", {
             "task_id": task_id,
             "session_id": session_id,
-            "content": full_content,
+            "message": ai_message,
+            "persisted": True,
+            "user_message": task.get("user_message", ""),
             "llm_provider": llm_provider,
             "user_info": user_info,
             "is_private": is_private,
