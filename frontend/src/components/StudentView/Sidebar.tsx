@@ -33,6 +33,7 @@ type ChannelType = 'group' | 'ai' | 'materials' | 'assignment' | 'learning_space
 interface Props {
     activeChannel: ChannelType;
     onChannelChange: (channel: ChannelType) => void;
+    onOpenTour: () => void;
 }
 
 function timeAgo(dateStr: string): string {
@@ -46,7 +47,7 @@ function timeAgo(dateStr: string): string {
     return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
 }
 
-export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => {
+export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange, onOpenTour }) => {
     const { user, logout } = useAuthStore();
     const { groups, currentGroupId, fetchGroups, createGroup, joinGroup, deleteGroup, renameGroup, setCurrentGroup } = useGroupStore();
     const {
@@ -236,6 +237,13 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
                             修改密码
                         </button>
                         <button
+                            onClick={() => { onOpenTour(); setShowUserMenu(false); }}
+                            className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                        >
+                            <BookOpen className="w-4 h-4 text-gray-400" />
+                            功能导览
+                        </button>
+                        <button
                             onClick={logout}
                             className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
                         >
@@ -251,6 +259,7 @@ export const Sidebar: React.FC<Props> = ({ activeChannel, onChannelChange }) => 
                 {channels.map(({ type, icon: Icon, label }) => (
                     <button
                         key={type}
+                        data-tour-target={type === 'learning_space' ? 'sidebar-learning-space' : 'sidebar-' + type}
                         onClick={() => onChannelChange(type)}
                         className={clsx(
                             'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors mb-0.5',

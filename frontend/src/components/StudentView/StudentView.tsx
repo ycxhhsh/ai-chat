@@ -18,6 +18,10 @@ import type { ChatMessage, GroupRoleInfo } from '../../types';
 import { NotificationBell } from '../NotificationBell';
 import { AsyncTaskPopover } from '../AsyncTaskPopover';
 import { useAsyncTaskStore, type AsyncTask } from '../../store/useAsyncTaskStore';
+import { StudentTourOverlay } from '../StudentTour/StudentTourOverlay';
+import { studentTourSteps } from '../StudentTour/studentTourSteps';
+import { findTourTargetElement, getStudentTourChannel } from '../StudentTour/studentTourHelpers';
+import { useStudentTourStore } from '../../store/useStudentTourStore';
 
 const MindMapPanel = React.lazy(() => import('../MindMap/MindMapPanel').then(mod => ({ default: mod.MindMapPanel })));
 const AssignmentPanel = React.lazy(() => import('./AssignmentPanel').then(mod => ({ default: mod.AssignmentPanel })));
@@ -62,6 +66,7 @@ export const StudentView: React.FC = () => {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [mobilePanel, setMobilePanel] = useState<'chat' | 'mindmap'>('chat');
     const [deepSearchOpen, setDeepSearchOpen] = useState(false);
+    const [tourTargetRect, setTourTargetRect] = useState<DOMRect | null>(null);
     const isDesktop = useIsDesktop();
     const { setInputMessage } = useScaffoldStore();
 
@@ -69,7 +74,18 @@ export const StudentView: React.FC = () => {
     const [isDrawingPromptLoading, setIsDrawingPromptLoading] = useState(false);
     const [drawingPrompt, setDrawingPrompt] = useState('');
     const lastClickTimeRef = useRef<number>(0);
+    const hasAttemptedTourAutoStart = useRef(false);
     const { startTask, completeTask, failTask, dismissTask } = useAsyncTaskStore();
+    const {
+        isOpen: isTourOpen,
+        currentStepIndex,
+        startAutoTour,
+        startManualTour,
+        nextStep,
+        prevStep,
+        finishTour,
+        skipTour,
+    } = useStudentTourStore();
 
     const { user } = useAuthStore();
     const { groups, currentGroupId } = useGroupStore();
@@ -471,6 +487,65 @@ export const StudentView: React.FC = () => {
         </div>
     ) : null;
 
+    const tourStepIds = studentTourSteps.map((step) => step.id);
+    const currentTourStep = studentTourSteps[currentStepIndex] || null;
+
+    const handleOpenTour = useCallback(() => {
+        if (!user?.user_id) return;
+        startManualTour(user.user_id);
+    }, [startManualTour, user?.user_id]);
+
+    const handleNextTourStep = useCallback(() => {
+        if (!currentTourStep) return;
+        if (currentStepIndex >= studentTourSteps.length - 1) {
+            finishTour(tourStepIds);
+            if (!isDesktop) setSidebarOpen(false);
+            return;
+        }
+        nextStep(tourStepIds);
+    }, [currentStepIndex, currentTourStep, finishTour, isDesktop, nextStep, tourStepIds]);
+
+    const handleSkipTour = useCallback(() => {
+        skipTour();
+        if (!isDesktop) setSidebarOpen(false);
+    }, [isDesktop, skipTour]);
+
+    useEffect(() => {
+        if (user?.role !== 'student' || !user.user_id || hasAttemptedTourAutoStart.current) return;
+        hasAttemptedTourAutoStart.current = true;
+        startAutoTour(user.user_id);
+    }, [startAutoTour, user?.role, user?.user_id]);
+
+    useEffect(() => {
+        if (!isTourOpen || !currentTourStep) {
+            setTourTargetRect(null);
+            return;
+        }
+        setActiveChannel(getStudentTourChannel(currentTourStep.id));
+        if (!isDesktop) {
+            setSidebarOpen(true);
+        }
+    }, [currentTourStep, isDesktop, isTourOpen]);
+
+    useEffect(() => {
+        if (!isTourOpen || !currentTourStep) {
+            setTourTargetRect(null);
+            return;
+        }
+
+        const updateRect = () => {
+            const element = findTourTargetElement(currentTourStep.targetKey);
+            setTourTargetRect(element instanceof HTMLElement ? element.getBoundingClientRect() : null);
+        };
+
+        const timeout = window.setTimeout(updateRect, isDesktop ? 0 : 220);
+        window.addEventListener('resize', updateRect);
+        return () => {
+            window.clearTimeout(timeout);
+            window.removeEventListener('resize', updateRect);
+        };
+    }, [activeChannel, currentTourStep, isDesktop, isTourOpen, sidebarOpen]);
+
     const channelTitles: Record<ChannelType, string> = {
         group: currentGroupId ? '小组讨论' : '请先选择或创建小组',
         ai: 'AI 苏格拉底导师（1v1）',
@@ -498,6 +573,7 @@ export const StudentView: React.FC = () => {
                 <Sidebar
                     activeChannel={activeChannel}
                     onChannelChange={(ch) => { setActiveChannel(ch); setSidebarOpen(false); }}
+                    onOpenTour={handleOpenTour}
                 />
             </div>
 
@@ -576,6 +652,7 @@ export const StudentView: React.FC = () => {
                         <AsyncTaskPopover onRetry={handleRetryAsyncTask} />
                         <NotificationBell />
                         <button
+                            data-tour-target="toolbar-deepsearch"
                             onClick={() => setDeepSearchOpen(true)}
                             className="flex items-center gap-1 px-2 py-1.5 text-xs text-gray-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
                             title="深度调研"
@@ -723,6 +800,20 @@ export const StudentView: React.FC = () => {
                         onCancel={() => setIsDrawingDialogOpen(false)}
                     />
                 </React.Suspense>
+            )}
+
+            {currentTourStep && (
+                <StudentTourOverlay
+                    isOpen={isTourOpen}
+                    stepTitle={currentTourStep.title}
+                    stepBody={currentTourStep.body}
+                    targetRect={tourTargetRect}
+                    onNext={handleNextTourStep}
+                    onBack={prevStep}
+                    onSkip={handleSkipTour}
+                    isFirstStep={currentStepIndex === 0}
+                    isLastStep={currentStepIndex === studentTourSteps.length - 1}
+                />
             )}
 
             {isRoleObjectionOpen && groupRole && (
