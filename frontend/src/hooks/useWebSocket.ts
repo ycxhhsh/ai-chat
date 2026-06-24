@@ -283,6 +283,13 @@ export function useWebSocket(sessionId: string | null) {
                 break;
             }
 
+            case 'AI_SYNC_REQUIRED':
+                window.dispatchEvent(new CustomEvent(
+                    'ai-conversation-sync-required',
+                    { detail: data },
+                ));
+                break;
+
             case 'AI_TYPING':
                 if (data.is_typing === false) {
                     activeStreamTaskRef.current = null;
