@@ -240,6 +240,39 @@ class ConnectionManager:
             logger.info("Redis pubsub listener STOPPED for session %s", session_id)
 
     async def _redis_listener_loop(self, session_id: str, pubsub) -> None:
+        from app.infra import redis_client
+
+        channel = f"{self.CHANNEL_PREFIX}{session_id}"
+        current_pubsub = pubsub
+        while self._connections.get(session_id):
+            try:
+                await self._consume_redis_messages(session_id, current_pubsub)
+                if not self._connections.get(session_id):
+                    return
+                logger.warning(
+                    "Redis listener ended for session %s; resubscribing",
+                    session_id,
+                )
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                pass
+
+            if not self._connections.get(session_id):
+                return
+            await asyncio.sleep(1)
+            current_pubsub = await redis_client.subscribe(channel)
+            if current_pubsub is None:
+                continue
+            await self._broadcast_local(
+                session_id,
+                json.dumps({
+                    "event": "AI_SYNC_REQUIRED",
+                    "data": {"reason": "redis_listener_recovered"},
+                }),
+            )
+
+    async def _consume_redis_messages(self, session_id: str, pubsub) -> None:
         """持续监听 Redis channel 并转发到本地连接。
 
         特殊处理 AI_REPLY_DONE：拦截后执行落库和后续任务，不转发给客户端。
@@ -279,9 +312,10 @@ class ConnectionManager:
                     pass
                 await self._broadcast_local(session_id, raw_data)
         except asyncio.CancelledError:
-            pass
+            raise
         except Exception as e:
             logger.error("Redis listener error for session %s: %s", session_id, e)
+            raise
         finally:
             try:
                 await pubsub.unsubscribe()
@@ -300,9 +334,49 @@ class ConnectionManager:
         user_info = data.get("user_info", {})
         is_private = data.get("is_private", False)
         conversation_id = data.get("conversation_id")
+        persisted_message = data.get("message")
+        if data.get("persisted") and isinstance(persisted_message, dict):
+            ai_message = persisted_message
+            session_id = ai_message.get("session_id", session_id)
+            content = ai_message.get("content", "")
+            llm_provider = ai_message.get("metadata_info", {}).get(
+                "llm_provider", llm_provider,
+            )
+            conversation_id = ai_message.get("conversation_id", conversation_id)
+            if is_private:
+                await self.send_to_user(
+                    session_id, user_info.get("user_id", ""),
+                    "CHAT_MESSAGE", ai_message,
+                )
+            else:
+                await self.broadcast(
+                    session_id, "CHAT_MESSAGE", ai_message, via_redis=False,
+                )
+
+            try:
+                from app.websockets.handlers.mindmap import _generate_mindmap
+                self._track_task(
+                    _generate_mindmap(
+                        session_id, user_info, self, auto_trigger=True,
+                    )
+                )
+            except Exception as e:
+                logger.warning("Auto mindmap trigger failed: %s", e)
+
+            if conversation_id:
+                self._track_task(self._update_conversation_after_reply(
+                    conversation_id=conversation_id,
+                    user_message=data.get("user_message", ""),
+                    ai_response=content,
+                    llm_provider=llm_provider,
+                    session_id=session_id,
+                    user_id=user_info.get("user_id", ""),
+                ))
+            return
+
 
         # 构造 AI 消息
-        ai_msg_id = str(_uuid.uuid4())
+        ai_msg_id = data.get("task_id") or str(_uuid.uuid4())
         now = datetime.now(timezone.utc)
         ai_message = {
             "message_id": ai_msg_id,
@@ -331,7 +405,7 @@ class ConnectionManager:
             )
 
         # 异步落库
-        self._track_task(self._save_ai_message(ai_message))
+        await self._save_ai_message(ai_message)
 
         # 自动更新思维导图
         try:

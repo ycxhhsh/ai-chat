@@ -22,6 +22,7 @@ import { StudentTourOverlay } from '../StudentTour/StudentTourOverlay';
 import { studentTourSteps } from '../StudentTour/studentTourSteps';
 import { findTourTargetElement, getStudentTourChannel } from '../StudentTour/studentTourHelpers';
 import { useStudentTourStore } from '../../store/useStudentTourStore';
+import { syncAiConversation } from './aiConversationSync';
 
 const MindMapPanel = React.lazy(() => import('../MindMap/MindMapPanel').then(mod => ({ default: mod.MindMapPanel })));
 const AssignmentPanel = React.lazy(() => import('./AssignmentPanel').then(mod => ({ default: mod.AssignmentPanel })));
@@ -195,6 +196,31 @@ export const StudentView: React.FC = () => {
         })();
         return () => { cancelled = true; };
     }, [currentConversationId, activeChannel, setAiMessages]);
+
+    useEffect(() => {
+        const handleAiConversationSync = () => {
+            if (activeChannel !== 'ai' || !currentConversationId) return;
+            syncAiConversation(
+                currentConversationId,
+                api.aiConversations.getMessages,
+                setAiMessages,
+            ).catch((error) => {
+                console.error(
+                    'Failed to synchronize recovered AI messages:',
+                    error,
+                );
+            });
+        };
+
+        window.addEventListener(
+            'ai-conversation-sync-required',
+            handleAiConversationSync,
+        );
+        return () => window.removeEventListener(
+            'ai-conversation-sync-required',
+            handleAiConversationSync,
+        );
+    }, [activeChannel, currentConversationId, setAiMessages]);
 
     // 切换频道/对话时加载对应思维导图
     useEffect(() => {
